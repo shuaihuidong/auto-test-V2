@@ -409,11 +409,6 @@ class TaskManagerV2:
             父执行是否仍然有效（True=有效，False=已停止）
         """
         try:
-            import requests
-
-# 禁用 SSL 警告（用于自签名证书）
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             api_base = self.config.server_url.rstrip('/')
             status_check_url = f"{api_base}/api/executions/{parent_execution_id}/status_check/"
 
