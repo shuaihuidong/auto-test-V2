@@ -1,29 +1,40 @@
-from rest_framework import viewsets, filters
+from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.http import HttpResponse
 from django.db.models import Q
-from django_filters.rest_framework import DjangoFilterBackend
-from django_filters import FilterSet
+from django_filters.rest_framework import DjangoFilterBackend, FilterSet
+from django_filters import CharFilter, BooleanFilter
 from .models import Script, DataSource
 from .serializers import ScriptSerializer, ScriptDetailSerializer, DataSourceSerializer
 from apps.projects.models import ProjectMember, Project
+from apps.users.permissions import IsScriptOwnerOrAdmin
 import json
 import yaml
 
 
 class ScriptFilterSet(FilterSet):
     """自定义脚本过滤器，处理 project=0 的情况"""
+    # 使用 CharFilter 接收字符串，避免外键验证
+    project = CharFilter(method='filter_project')
+    type = CharFilter(field_name='type')
+    framework = CharFilter(field_name='framework')
+    is_module = BooleanFilter(field_name='is_module')
+
     class Meta:
         model = Script
-        fields = ['project', 'type', 'framework', 'is_module']
+        fields = []
 
     def filter_project(self, queryset, name, value):
         """处理project过滤，当value=0时不过滤"""
-        if value == '0' or value == 0:
+        if value == '0' or value == 0 or value == '':
             return queryset  # 不按项目过滤
-        return queryset.filter(**{name: value})
+        try:
+            project_id = int(value)
+            return queryset.filter(project_id=project_id)
+        except (ValueError, TypeError):
+            return queryset
 
 
 class DataSourceViewSet(viewsets.ModelViewSet):
@@ -36,9 +47,9 @@ class DataSourceViewSet(viewsets.ModelViewSet):
 
 class ScriptViewSet(viewsets.ModelViewSet):
     serializer_class = ScriptSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsScriptOwnerOrAdmin]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['type', 'framework', 'is_module']  # 移除project，在get_queryset中手动处理
+    filterset_class = ScriptFilterSet
     search_fields = ['name', 'description']
     ordering_fields = ['created_at', 'updated_at', 'name']
     ordering = ['-created_at']
@@ -86,6 +97,73 @@ class ScriptViewSet(viewsets.ModelViewSet):
             return ScriptDetailSerializer
         return ScriptSerializer
 
+    def perform_create(self, serializer):
+        """创建脚本时自动设置创建者"""
+        serializer.save(created_by=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        """创建脚本 - 权限检查"""
+        user = request.user
+
+        # guest 不能创建脚本
+        if user.role == 'guest':
+            return Response(
+                {'error': '访客无权创建脚本，请联系管理员升级权限'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        """更新脚本 - 权限检查"""
+        script = self.get_object()
+        user = request.user
+
+        # 管理员及以上有完全权限
+        if user.role in ['admin', 'super_admin']:
+            return super().update(request, *args, **kwargs)
+
+        # tester 只能更新自己创建的脚本
+        if user.role == 'tester':
+            if script.created_by != user:
+                return Response(
+                    {'error': '只能编辑自己创建的脚本'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            return super().update(request, *args, **kwargs)
+
+        # guest 不能更新
+        return Response(
+            {'error': '访客无权编辑脚本'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        """删除脚本 - 权限检查"""
+        script = self.get_object()
+        user = request.user
+
+        # 管理员及以上有完全权限
+        if user.role in ['admin', 'super_admin']:
+            script.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # tester 只能删除自己创建的脚本
+        if user.role == 'tester':
+            if script.created_by != user:
+                return Response(
+                    {'error': '只能删除自己创建的脚本'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            script.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # guest 不能删除
+        return Response(
+            {'error': '访客无权删除脚本'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
     @action(detail=False, methods=['get'])
     def modules(self, request):
         """获取可复用的模块列表"""
@@ -97,6 +175,15 @@ class ScriptViewSet(viewsets.ModelViewSet):
     def duplicate(self, request, pk=None):
         """复制脚本"""
         script = self.get_object()
+        user = request.user
+
+        # guest 不能复制脚本
+        if user.role == 'guest':
+            return Response(
+                {'error': '访客无权复制脚本'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         new_script = Script.objects.create(
             project=script.project,
             name=f'{script.name} (副本)',
@@ -375,6 +462,15 @@ const variables = {variables};
     @action(detail=False, methods=['post'])
     def import_script(self, request):
         """导入脚本"""
+        user = request.user
+
+        # guest 不能导入脚本
+        if user.role == 'guest':
+            return Response(
+                {'error': '访客无权导入脚本'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         file = request.FILES.get('file')
         if not file:
             return Response({'error': '请上传文件'}, status=400)

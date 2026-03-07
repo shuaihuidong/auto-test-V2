@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Project, ProjectMember
 from .serializers import ProjectSerializer, ProjectMemberSerializer, ProjectMemberCreateSerializer
+from apps.users.permissions import IsProjectOwnerOrAdmin, IsAdmin
 
 
 class ProjectMemberViewSet(viewsets.ModelViewSet):
@@ -60,9 +61,12 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
         except Project.DoesNotExist:
             return Response({'error': '项目不存在'}, status=status.HTTP_404_NOT_FOUND)
 
-        # 检查权限：只有项目创建者可以添加成员
-        if project.creator != request.user:
-            return Response({'error': '只有项目创建者可以添加成员'}, status=status.HTTP_403_FORBIDDEN)
+        # 检查权限：项目创建者、管理员、超级管理员可以添加成员
+        is_creator = project.creator == request.user
+        is_admin = request.user.role in ['admin', 'super_admin']
+
+        if not (is_creator or is_admin):
+            return Response({'error': '只有项目创建者或管理员可以添加成员'}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = ProjectMemberCreateSerializer(
             data=request.data,
@@ -89,9 +93,12 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
         except Project.DoesNotExist:
             return Response({'error': '项目不存在'}, status=status.HTTP_404_NOT_FOUND)
 
-        # 检查权限：只有项目创建者可以移除成员
-        if project.creator != request.user:
-            return Response({'error': '只有项目创建者可以移除成员'}, status=status.HTTP_403_FORBIDDEN)
+        # 检查权限：项目创建者、管理员、超级管理员可以移除成员
+        is_creator = project.creator == request.user
+        is_admin = request.user.role in ['admin', 'super_admin']
+
+        if not (is_creator or is_admin):
+            return Response({'error': '只有项目创建者或管理员可以移除成员'}, status=status.HTTP_403_FORBIDDEN)
 
         return super().destroy(request, *args, **kwargs)
 
@@ -105,9 +112,12 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
         except Project.DoesNotExist:
             return Response({'error': '项目不存在'}, status=status.HTTP_404_NOT_FOUND)
 
-        # 检查权限：只有项目创建者可以变更成员角色
-        if project.creator != request.user:
-            return Response({'error': '只有项目创建者可以变更成员角色'}, status=status.HTTP_403_FORBIDDEN)
+        # 检查权限：项目创建者、管理员、超级管理员可以变更成员角色
+        is_creator = project.creator == request.user
+        is_admin = request.user.role in ['admin', 'super_admin']
+
+        if not (is_creator or is_admin):
+            return Response({'error': '只有项目创建者或管理员可以变更成员角色'}, status=status.HTTP_403_FORBIDDEN)
 
         member = self.get_object()
         serializer = ProjectMemberSerializer(
@@ -123,7 +133,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
 class ProjectViewSet(viewsets.ModelViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsProjectOwnerOrAdmin]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['type', 'creator']
     search_fields = ['name', 'description']
@@ -153,6 +163,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    def perform_create(self, serializer):
+        """创建项目时自动设置创建者"""
+        serializer.save(creator=self.request.user)
+
     def create(self, request, *args, **kwargs):
         """创建项目 - 权限检查"""
         user = request.user
@@ -166,14 +180,35 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         return super().create(request, *args, **kwargs)
 
-    def destroy(self, request, *args, **kwargs):
-        """删除项目 - 只有项目创建者可以删除"""
+    def update(self, request, *args, **kwargs):
+        """更新项目 - 权限检查"""
         project = self.get_object()
+        user = request.user
 
-        # 检查权限：只有项目创建者可以删除项目
-        if project.creator != request.user:
+        # 检查权限：项目创建者、管理员、超级管理员可以更新项目
+        is_creator = project.creator == user
+        is_admin = user.role in ['admin', 'super_admin']
+
+        if not (is_creator or is_admin):
             return Response(
-                {'error': '只有项目创建者可以删除项目'},
+                {'error': '只有项目创建者或管理员可以编辑项目'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """删除项目 - 项目创建者和管理员可以删除"""
+        project = self.get_object()
+        user = request.user
+
+        # 检查权限：项目创建者、管理员、超级管理员可以删除项目
+        is_creator = project.creator == user
+        is_admin = user.role in ['admin', 'super_admin']
+
+        if not (is_creator or is_admin):
+            return Response(
+                {'error': '只有项目创建者或管理员可以删除项目'},
                 status=status.HTTP_403_FORBIDDEN
             )
 

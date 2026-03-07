@@ -4,12 +4,13 @@ import { login as loginApi, logout as logoutApi, getUserInfo } from '@/api/user'
 import type { User } from '@/types/user'
 
 const STORAGE_KEY = 'user_info'
+const TOKEN_KEY = 'auth_token'
 
 export const useUserStore = defineStore('user', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(null)
 
-  const isLoggedIn = computed(() => !!user.value)
+  const isLoggedIn = computed(() => !!user.value && !!token.value)
 
   // 从 localStorage 恢复用户状态
   function restoreState() {
@@ -19,9 +20,14 @@ export const useUserStore = defineStore('user', () => {
         const userData = JSON.parse(saved)
         user.value = userData
       }
+      const savedToken = localStorage.getItem(TOKEN_KEY)
+      if (savedToken) {
+        token.value = savedToken
+      }
     } catch (e) {
       console.error('Failed to restore user state:', e)
       localStorage.removeItem(STORAGE_KEY)
+      localStorage.removeItem(TOKEN_KEY)
     }
   }
 
@@ -32,11 +38,22 @@ export const useUserStore = defineStore('user', () => {
     } else {
       localStorage.removeItem(STORAGE_KEY)
     }
+    if (token.value) {
+      localStorage.setItem(TOKEN_KEY, token.value)
+    } else {
+      localStorage.removeItem(TOKEN_KEY)
+    }
+  }
+
+  // 获取 Token
+  function getToken(): string | null {
+    return token.value || localStorage.getItem(TOKEN_KEY)
   }
 
   async function login(username: string, password: string) {
     const res = await loginApi(username, password)
     user.value = res.user
+    token.value = res.token
     saveState()
     return res
   }
@@ -64,6 +81,7 @@ export const useUserStore = defineStore('user', () => {
     user,
     token,
     isLoggedIn,
+    getToken,
     login,
     logout,
     fetchUserInfo,

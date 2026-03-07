@@ -19,10 +19,20 @@ class ReportViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """获取查询集 - 只返回当前用户的报告"""
-        return Report.objects.select_related('execution').filter(
-            execution__created_by=self.request.user
-        )
+        """获取查询集 - 根据用户权限返回报告"""
+        queryset = Report.objects.select_related('execution').all()
+        user = self.request.user
+
+        # 管理员和超级管理员可以看到所有报告
+        if user.role not in ['admin', 'super_admin']:
+            queryset = queryset.filter(execution__created_by=user)
+
+        return queryset
+        user = self.request.user
+        if user.role not in ['admin', 'super_admin']:
+            queryset = queryset.filter(execution__created_by=user)
+
+        return queryset
 
     @action(detail=True, methods=['get'])
     def html(self, request, pk=None):

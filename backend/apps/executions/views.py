@@ -7,6 +7,7 @@ from django.utils import timezone
 from datetime import datetime
 from .models import Execution
 from .serializers import ExecutionSerializer, ExecutionCreateSerializer
+from apps.users.permissions import IsExecutionOwnerOrAdmin
 import time
 import logging
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class ExecutionViewSet(viewsets.ModelViewSet):
     serializer_class = ExecutionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsExecutionOwnerOrAdmin]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'plan', 'script', 'execution_type']
     search_fields = ['plan__name', 'script__name']
@@ -25,9 +26,13 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """获取查询集 - 根据execution_type参数返回不同的执行记录"""
         queryset = Execution.objects.select_related('plan', 'script', 'created_by').filter(
-            parent__isnull=True,  # 只返回父执行记录或单个脚本执行
-            created_by=self.request.user
+            parent__isnull=True  # 只返回父执行记录或单个脚本执行
         )
+
+        # 管理员和超级管理员可以看到所有执行记录
+        user = self.request.user
+        if user.role not in ['admin', 'super_admin']:
+            queryset = queryset.filter(created_by=user)
 
         # 支持按名称筛选
         name = self.request.query_params.get('name', '')
@@ -53,7 +58,19 @@ class ExecutionViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    def perform_create(self, serializer):
+        """创建执行记录时自动设置创建者"""
+        serializer.save(created_by=self.request.user)
+
     def create(self, request, *args, **kwargs):
+        # 权限检查 - guest 不能创建执行
+        user = request.user
+        if user.role == 'guest':
+            return Response(
+                {'error': '访客无权执行测试，请联系管理员升级权限'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = ExecutionCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -242,10 +259,58 @@ class ExecutionViewSet(viewsets.ModelViewSet):
             'project_id': script.project_id,
         }
 
+    def update(self, request, *args, **kwargs):
+        """更新执行记录 - 权限检查"""
+        execution = self.get_object()
+        user = request.user
+
+        # 管理员及以上有完全权限
+        if user.role in ['admin', 'super_admin']:
+            return super().update(request, *args, **kwargs)
+
+        # 只能更新自己的执行记录
+        if execution.created_by != user:
+            return Response(
+                {'error': '只能操作自己的执行记录'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """删除执行记录 - 权限检查"""
+        execution = self.get_object()
+        user = request.user
+
+        # 管理员及以上有完全权限
+        if user.role in ['admin', 'super_admin']:
+            execution.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # 只能删除自己的执行记录
+        if execution.created_by != user:
+            return Response(
+                {'error': '只能删除自己的执行记录'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        execution.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=['post'])
     def stop(self, request, pk=None):
         """停止执行"""
         execution = self.get_object()
+        user = request.user
+
+        # 权限检查
+        if user.role not in ['admin', 'super_admin']:
+            if execution.created_by != user:
+                return Response(
+                    {'error': '只能停止自己的执行记录'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         if execution.status not in ['pending', 'running', 'paused']:
             return Response(
                 {'error': '只能停止等待中、执行中或已暂停的任务'},
@@ -313,6 +378,15 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     def debug(self, request, pk=None):
         """启动调试模式"""
         execution = self.get_object()
+        user = request.user
+
+        # 权限检查
+        if user.role not in ['admin', 'super_admin']:
+            if execution.created_by != user:
+                return Response(
+                    {'error': '只能调试自己的执行记录'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         if execution.status != 'pending':
             return Response(
@@ -347,6 +421,15 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     def pause(self, request, pk=None):
         """暂停执行"""
         execution = self.get_object()
+        user = request.user
+
+        # 权限检查
+        if user.role not in ['admin', 'super_admin']:
+            if execution.created_by != user:
+                return Response(
+                    {'error': '只能暂停自己的执行记录'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         if execution.status != 'running':
             return Response(
@@ -382,6 +465,15 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     def resume(self, request, pk=None):
         """恢复执行"""
         execution = self.get_object()
+        user = request.user
+
+        # 权限检查
+        if user.role not in ['admin', 'super_admin']:
+            if execution.created_by != user:
+                return Response(
+                    {'error': '只能恢复自己的执行记录'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         if execution.status != 'paused':
             return Response(
@@ -411,6 +503,15 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     def step(self, request, pk=None):
         """单步执行"""
         execution = self.get_object()
+        user = request.user
+
+        # 权限检查
+        if user.role not in ['admin', 'super_admin']:
+            if execution.created_by != user:
+                return Response(
+                    {'error': '只能操作自己的执行记录'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         if execution.status != 'paused':
             return Response(
@@ -443,6 +544,16 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     def breakpoint(self, request, pk=None):
         """设置/移除断点"""
         execution = self.get_object()
+        user = request.user
+
+        # 权限检查
+        if user.role not in ['admin', 'super_admin']:
+            if execution.created_by != user:
+                return Response(
+                    {'error': '只能操作自己的执行记录'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         step_index = request.data.get('step_index')
         action_type = request.data.get('action', 'add')  # add or remove
 
@@ -494,10 +605,10 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def statistics(self, request):
         """获取执行统计"""
-        total = self.queryset.count()
-        running = self.queryset.filter(status='running').count()
-        completed = self.queryset.filter(status='completed').count()
-        failed = self.queryset.filter(status='failed').count()
+        total = self.get_queryset().count()
+        running = self.get_queryset().filter(status='running').count()
+        completed = self.get_queryset().filter(status='completed').count()
+        failed = self.get_queryset().filter(status='failed').count()
 
         return Response({
             'total': total,

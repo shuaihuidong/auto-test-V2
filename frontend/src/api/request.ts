@@ -5,6 +5,8 @@ import { message } from 'ant-design-vue'
 // API 基础地址 - 从环境变量读取
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
+const TOKEN_KEY = 'auth_token'
+
 const instance: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
@@ -14,9 +16,14 @@ const instance: AxiosInstance = axios.create({
   }
 })
 
-// 请求拦截器
+// 请求拦截器 - 添加 Token 认证
 instance.interceptors.request.use(
   (config) => {
+    // 从 localStorage 获取 token
+    const token = localStorage.getItem(TOKEN_KEY)
+    if (token) {
+      config.headers.Authorization = `Token ${token}`
+    }
     return config
   },
   (error) => {

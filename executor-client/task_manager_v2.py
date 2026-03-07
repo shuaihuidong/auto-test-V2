@@ -14,6 +14,10 @@ from typing import Dict, Any, Optional
 from loguru import logger
 import requests
 
+# 禁用 SSL 警告（用于自签名证书）
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 from config import get_config_manager, ExecutorConfig
 from executor import ScriptExecutor
 from message_queue_client import get_message_queue_consumer
@@ -118,8 +122,7 @@ class TaskManagerV2:
                         "platform": "Windows",
                         "browser_types": ["chrome", "firefox", "edge"],
                         "owner_username": self.config.owner_username
-                    },
-                    timeout=10
+                    }, verify=False, timeout=10
                 )
 
                 if response.status_code == 200:
@@ -204,8 +207,7 @@ class TaskManagerV2:
                     "memory_usage": resources.get("memory", 0),
                     "disk_usage": resources.get("disk", 0),
                     "message": ""
-                },
-                timeout=5
+                }, verify=False, timeout=5
             )
 
             if response.status_code == 200:
@@ -239,7 +241,7 @@ class TaskManagerV2:
                 for parent_id in parent_ids:
                     try:
                         status_check_url = f"{api_base}/api/executions/{parent_id}/status_check/"
-                        response = requests.get(status_check_url, timeout=2)
+                        response = requests.get(status_check_url, verify=False, timeout=2)
                         if response.status_code == 200:
                             data = response.json()
                             status = data.get("status", "")
@@ -361,7 +363,7 @@ class TaskManagerV2:
             # 优先检查父任务状态（如果存在）
             if parent_execution_id:
                 status_check_url = f"{api_base}/api/executions/{parent_execution_id}/status_check/"
-                response = requests.get(status_check_url, timeout=3)
+                response = requests.get(status_check_url, verify=False, timeout=3)
 
                 if response.status_code == 200:
                     data = response.json()
@@ -374,7 +376,7 @@ class TaskManagerV2:
 
             # 检查子执行状态
             status_check_url = f"{api_base}/api/executions/{execution_id}/status_check/"
-            response = requests.get(status_check_url, timeout=3)
+            response = requests.get(status_check_url, verify=False, timeout=3)
 
             if response.status_code == 200:
                 data = response.json()
@@ -408,10 +410,14 @@ class TaskManagerV2:
         """
         try:
             import requests
+
+# 禁用 SSL 警告（用于自签名证书）
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             api_base = self.config.server_url.rstrip('/')
             status_check_url = f"{api_base}/api/executions/{parent_execution_id}/status_check/"
 
-            response = requests.get(status_check_url, timeout=3)
+            response = requests.get(status_check_url, verify=False, timeout=3)
 
             if response.status_code == 200:
                 data = response.json()
@@ -455,7 +461,7 @@ class TaskManagerV2:
             api_base = self.config.server_url.rstrip('/')
             status_check_url = f"{api_base}/api/executions/{parent_execution_id}/status_check/"
 
-            response = requests.get(status_check_url, timeout=5)
+            response = requests.get(status_check_url, verify=False, timeout=5)
 
             if response.status_code == 200:
                 data = response.json()
@@ -896,8 +902,7 @@ class TaskManagerV2:
                     dist_response = requests.post(
                         distribute_url,
                         json={},
-                        headers={'Content-Type': 'application/json; charset=utf-8'},
-                        timeout=5
+                        headers={'Content-Type': 'application/json; charset=utf-8'}, verify=False, timeout=5
                     )
                     if dist_response.status_code == 200:
                         logger.info(f"已请求后端分发新任务")
@@ -993,8 +998,7 @@ class TaskManagerV2:
                 json={
                     "image_data": image_data,
                     "is_failure": is_failure
-                },
-                timeout=10
+                }, verify=False, timeout=10
             )
             logger.info(f"截图已上报: {task_id}")
 

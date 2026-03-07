@@ -91,23 +91,18 @@ def login_view(request):
 
     if user is not None:
         login(request, user)
-        # 生成token用于WebSocket认证（使用session key作为token）
-        from django.contrib.sessions.models import Session
-        from django.utils import timezone
-        import secrets
-
-        # 为执行机客户端生成一个简单的token
-        # 实际生产环境应该使用更安全的token生成方式
-        token = secrets.token_hex(32)
+        # 使用 DRF Token 认证
+        from rest_framework.authtoken.models import Token
+        token, created = Token.objects.get_or_create(user=user)
 
         # 将token存储在session中供WebSocket验证使用
-        request.session['executor_token'] = token
+        request.session['executor_token'] = token.key
         request.session['executor_user_id'] = user.id
         request.session.save()
 
         return Response({
             'message': '登录成功',
-            'token': token,
+            'token': token.key,
             'user': UserSerializer(user).data
         }, status=status.HTTP_200_OK)
     else:
