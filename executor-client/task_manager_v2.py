@@ -889,6 +889,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             response = requests.post(
                 result_url,
                 json=result,  # 直接传入字典，让 requests 自动序列化
+                verify=False,  # 跳过 SSL 验证
                 timeout=10
             )
 
