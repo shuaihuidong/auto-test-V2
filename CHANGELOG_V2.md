@@ -295,4 +295,7 @@ data-testid → [data-testid=...]
 | 日期 | 模块 | 文件 | 描述 |
 |------|------|------|------|
 | 2026-04-21 | 全量 | 54 files | V2.0 初始提交，详见上方各章节 |
-| | | | |
+| 2026-04-21 | E2E测试 | tests-e2e/ (21 files) | 全套 E2E 测试方案：61 条用例清单 + POM 测试骨架 + Mock 策略 |
+| 2026-04-21 | 文档 | DEPLOYMENT_V2.md | V2.0 部署文档 |
+| 2026-04-21 | 文档 | CHANGELOG_V2.md | V2.0 开发变更日志 |
+| 2026-04-21 | Git | remote v2 | 新仓库 shuaihuidong/auto-test-V2 推送完成 |
