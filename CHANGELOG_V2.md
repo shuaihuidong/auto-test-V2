@@ -299,3 +299,6 @@ data-testid → [data-testid=...]
 | 2026-04-21 | 文档 | DEPLOYMENT_V2.md | V2.0 部署文档 |
 | 2026-04-21 | 文档 | CHANGELOG_V2.md | V2.0 开发变更日志 |
 | 2026-04-21 | Git | remote v2 | 新仓库 shuaihuidong/auto-test-V2 推送完成 |
+| 2026-04-22 | 测试 | tests-e2e/ | E2E 测试对齐实际 API: 23 passed, 5 skipped (无 LLM Key), 4 error (无 pytest-playwright) |
+| 2026-04-22 | 配置 | settings.py | DB_PATH 支持环境变量覆盖，解决 Windows 本地运行问题 |
+| 2026-04-22 | 数据 | create_admin.py | 修正新建 admin 用户默认 role 为 guest (需手动改 super_admin) |
