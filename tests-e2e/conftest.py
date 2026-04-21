@@ -14,7 +14,7 @@ from playwright.sync_api import Page, BrowserContext, expect
 # ============================================================
 # 常量
 # ============================================================
-BASE_URL = "http://localhost:80"       # 前端地址 (Nginx)
+BASE_URL = "http://localhost:5173"     # 前端地址 (Vite dev server)
 API_URL = "http://localhost:8000"      # 后端地址 (Django)
 
 TEST_USERS = {
@@ -199,7 +199,7 @@ def test_script(api_client, test_project):
         "type": "web",
         "framework": "playwright",
         "steps": [
-            {"type": "open_page", "name": "打开页面", "params": {"url": "https://example.com"}},
+            {"type": "goto", "name": "打开页面", "params": {"value": "https://example.com"}},
         ],
     }
     resp = api_client.post(f"{api_client.base_url}/scripts/", json=payload)

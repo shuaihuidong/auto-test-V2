@@ -94,7 +94,7 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': Path('/app/db/db.sqlite3'),  # 使用持久化卷目录
+        'NAME': Path(os.getenv('DB_PATH', '/app/db/db.sqlite3')),  # 本地测试: DB_PATH=db/db.sqlite3
     }
 }
 
