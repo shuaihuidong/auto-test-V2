@@ -5,10 +5,11 @@ from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from datetime import datetime
-from .models import Execution
-from .serializers import ExecutionSerializer, ExecutionCreateSerializer
+from .models import Execution, HealLog
+from .serializers import ExecutionSerializer, ExecutionCreateSerializer, HealLogSerializer, HealLogCreateSerializer
 from apps.users.permissions import IsExecutionOwnerOrAdmin
 import time
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -631,3 +632,150 @@ class ExecutionViewSet(viewsets.ModelViewSet):
         children = execution.children.select_related('script', 'created_by').all()
         serializer = ExecutionSerializer(children, many=True)
         return Response(serializer.data)
+
+    # ==================== 智能自愈 API ====================
+
+    @action(detail=True, methods=['post'])
+    def heal(self, request, pk=None):
+        """
+        触发智能自愈 - 分析失败步骤并推荐替代定位器
+
+        请求体:
+        {
+            "script_id": 123,              # 必填
+            "step_index": 2,               # 必填
+            "error_message": "元素未找到",  # 必填
+            "dom_snapshot": "<html>..."     # 可选，DOM 快照
+        }
+
+        响应:
+        {
+            "heal_status": "success",
+            "original_locator": "xpath=//button[@class='submit']",
+            "suggested_locator": "[data-testid='login-btn']",
+            "suggested_locator_platform": {"type": "css", "value": "[data-testid='login-btn']"},
+            "locator_type": "data-testid",
+            "confidence": 0.95,
+            "reason": "...",
+            "auto_applied": true,
+            "heal_log_id": 456,
+            "token_usage": {...}
+        }
+        """
+        execution = self.get_object()
+        user = request.user
+
+        if user.role == 'guest':
+            return Response(
+                {'error': '访客无权使用自愈功能'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        script_id = request.data.get('script_id')
+        step_index = request.data.get('step_index')
+        error_message = request.data.get('error_message', '')
+        dom_snapshot = request.data.get('dom_snapshot', '')
+
+        if not script_id or step_index is None:
+            return Response(
+                {'error': '缺少 script_id 或 step_index'},
+                status=400,
+            )
+
+        try:
+            from ai_service import get_llm_gateway
+            from ai_service.healing import HealingService
+
+            gateway = get_llm_gateway()
+            service = HealingService(gateway)
+
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(
+                    service.auto_heal_script(
+                        script_id=script_id,
+                        execution_id=execution.id,
+                        step_index=int(step_index),
+                        error_message=error_message,
+                        dom_snapshot=dom_snapshot,
+                    )
+                )
+            finally:
+                loop.close()
+
+            return Response(result)
+
+        except Exception as e:
+            logger.error(f"自愈分析失败: {e}")
+            return Response(
+                {'error': f'自愈分析失败: {str(e)}'},
+                status=500,
+            )
+
+    @action(detail=True, methods=['get'])
+    def heal_logs(self, request, pk=None):
+        """获取执行记录关联的自愈日志"""
+        execution = self.get_object()
+        logs = HealLog.objects.filter(execution=execution).order_by('-created_at')
+        serializer = HealLogSerializer(logs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'])
+    def heal_apply(self, request):
+        """
+        手动应用自愈建议（用户审核后确认）
+
+        请求体:
+        {
+            "heal_log_id": 456  # HealLog ID
+        }
+        """
+        user = request.user
+        if user.role == 'guest':
+            return Response(
+                {'error': '访客无权操作'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        heal_log_id = request.data.get('heal_log_id')
+        if not heal_log_id:
+            return Response({'error': '缺少 heal_log_id'}, status=400)
+
+        try:
+            heal_log = HealLog.objects.get(id=heal_log_id)
+        except HealLog.DoesNotExist:
+            return Response({'error': '自愈记录不存在'}, status=404)
+
+        if heal_log.auto_applied:
+            return Response({'error': '该建议已应用'}, status=400)
+
+        if heal_log.heal_status != 'success':
+            return Response({'error': '仅成功状态的建议可应用'}, status=400)
+
+        # 应用到脚本
+        from apps.scripts.models import Script
+        script = heal_log.script
+        steps = script.steps or []
+
+        if heal_log.step_index < len(steps):
+            # 转换建议定位器为平台格式
+            from ai_service.healing import _suggested_locator_to_platform
+            suggested_platform = _suggested_locator_to_platform(
+                heal_log.suggested_locator,
+                heal_log.locator_type,
+            )
+            steps[heal_log.step_index]["params"]["locator"] = suggested_platform
+            script.steps = steps
+            script.save(update_fields=["steps", "updated_at"])
+
+            heal_log.auto_applied = True
+            heal_log.save(update_fields=["auto_applied"])
+
+            return Response({
+                'message': '自愈建议已应用',
+                'script_id': script.id,
+                'step_index': heal_log.step_index,
+                'new_locator': suggested_platform,
+            })
+
+        return Response({'error': '步骤索引越界'}, status=400)

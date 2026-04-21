@@ -188,3 +188,98 @@ class Execution(models.Model):
         # 如果重试次数用完，使用时间戳确保唯一性
         now = datetime.now()
         return f"{now.strftime('%Y%m%d%H%M%S')}"
+
+
+class HealLog(models.Model):
+    """
+    智能自愈日志 - 记录定位器自动修复历史
+    当步骤执行因定位器失效而失败时，系统尝试推荐替代定位器并记录全过程。
+    """
+    HEAL_STATUS_CHOICES = [
+        ('success', '修复成功'),
+        ('failed', '修复失败'),
+        ('pending', '待审核'),
+    ]
+
+    HEAL_STRATEGY_CHOICES = [
+        ('llm_recommend', 'LLM推荐'),
+        ('dom_analysis', 'DOM分析'),
+        ('rule_based', '规则匹配'),
+    ]
+
+    LOCATOR_TYPE_CHOICES = [
+        ('css', 'CSS选择器'),
+        ('xpath', 'XPath'),
+        ('data-testid', 'data-testid属性'),
+        ('id', 'ID属性'),
+        ('text', '文本选择器'),
+    ]
+
+    # 关联关系
+    script = models.ForeignKey(
+        'scripts.Script',
+        on_delete=models.CASCADE,
+        related_name='heal_logs',
+        verbose_name='关联脚本'
+    )
+    execution = models.ForeignKey(
+        Execution,
+        on_delete=models.CASCADE,
+        related_name='heal_logs',
+        verbose_name='关联执行记录'
+    )
+
+    # 步骤信息
+    step_index = models.IntegerField(verbose_name='步骤索引')
+    step_name = models.CharField(max_length=200, blank=True, verbose_name='步骤名称')
+
+    # 定位器信息
+    original_locator = models.CharField(max_length=500, verbose_name='原始定位器')
+    suggested_locator = models.CharField(max_length=500, blank=True, verbose_name='推荐替代定位器')
+    locator_type = models.CharField(
+        max_length=20,
+        choices=LOCATOR_TYPE_CHOICES,
+        default='css',
+        verbose_name='定位器类型'
+    )
+
+    # 修复状态与策略
+    heal_status = models.CharField(
+        max_length=20,
+        choices=HEAL_STATUS_CHOICES,
+        default='pending',
+        verbose_name='修复状态'
+    )
+    heal_strategy = models.CharField(
+        max_length=20,
+        choices=HEAL_STRATEGY_CHOICES,
+        default='llm_recommend',
+        verbose_name='修复策略'
+    )
+    confidence = models.FloatField(default=0.0, verbose_name='置信度')
+
+    # 分析详情
+    reason = models.TextField(blank=True, verbose_name='修复原因说明')
+    dom_snapshot = models.TextField(blank=True, verbose_name='DOM快照')
+
+    # LLM 消耗记录
+    llm_provider = models.CharField(max_length=50, blank=True, verbose_name='LLM提供商')
+    token_consumed = models.IntegerField(default=0, verbose_name='Token消耗量')
+
+    # 应用状态
+    auto_applied = models.BooleanField(default=False, verbose_name='已自动应用')
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'executions_heallog'
+        verbose_name = '自愈日志'
+        verbose_name_plural = '自愈日志'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['script', 'heal_status'], name='idx_heal_script_status'),
+            models.Index(fields=['execution', 'step_index'], name='idx_heal_exec_step'),
+        ]
+
+    def __str__(self):
+        return f'{self.script.name} 步骤{self.step_index} - {self.get_heal_status_display()}'

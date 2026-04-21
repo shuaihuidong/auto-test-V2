@@ -8,6 +8,12 @@
         <h2>{{ projectName }} - 脚本列表</h2>
       </a-space>
       <a-space>
+        <a-button @click="openNL2Script">
+          <ThunderboltOutlined /> AI 生成
+        </a-button>
+        <a-button @click="openBatchNL2Script">
+          <ThunderboltOutlined /> 批量生成
+        </a-button>
         <a-button type="primary" @click="goToCreateScript">
           <PlusOutlined /> 新建脚本
         </a-button>
@@ -103,6 +109,20 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- NL2Script AI 生成对话框 -->
+    <NL2ScriptDialog
+      ref="nl2scriptRef"
+      :projects="[{ id: projectId, name: projectName }]"
+      @saved="loadScripts"
+    />
+
+    <!-- 批量 AI 生成对话框 -->
+    <NL2ScriptBatchDialog
+      ref="batchNL2ScriptRef"
+      :projects="[{ id: projectId, name: projectName }]"
+      @saved="loadScripts"
+    />
   </div>
 </template>
 
@@ -117,12 +137,15 @@ import {
   EditOutlined,
   DeleteOutlined,
   PlayCircleOutlined,
-  CopyOutlined
+  CopyOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons-vue'
 import { getScriptList, deleteScript as deleteScriptApi, duplicateScript as duplicateScriptApi } from '@/api/script'
 import { getProject } from '@/api/project'
 import { createExecution } from '@/api/execution'
 import { executorApi, type Executor } from '@/api/executor'
+import NL2ScriptDialog from '@/components/AI/NL2ScriptDialog.vue'
+import NL2ScriptBatchDialog from '@/components/AI/NL2ScriptBatchDialog.vue'
 import type { Script } from '@/types/script'
 
 interface Props {
@@ -148,6 +171,18 @@ const selectedExecutorId = ref<number | null>(null)
 const availableExecutors = ref<Executor[]>([])
 const loadingExecutors = ref(false)
 const scriptToRun = ref<Script | null>(null)
+
+// NL2Script
+const nl2scriptRef = ref()
+const batchNL2ScriptRef = ref()
+
+function openNL2Script() {
+  nl2scriptRef.value?.open()
+}
+
+function openBatchNL2Script() {
+  batchNL2ScriptRef.value?.open()
+}
 
 const columns = [
   { title: '脚本名称', key: 'name', dataIndex: 'name', width: 350, ellipsis: true },

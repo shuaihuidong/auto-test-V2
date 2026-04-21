@@ -1,0 +1,53 @@
+# ============================================
+# 调试环境 Docker 执行器 (含 noVNC)
+# 支持通过浏览器实时观察 Playwright 操作
+# ============================================
+
+FROM mcr.microsoft.com/playwright/python:v1.49.0-noble
+
+WORKDIR /app
+
+# 安装 noVNC + Xvfb + 轻量窗口管理器
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    x11vnc \
+    fluxbox \
+    novnc \
+    websockify \
+    supervisor \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Python 依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir playwright && \
+    playwright install chromium && \
+    playwright install-deps chromium && \
+    pip cache purge && \
+    rm -rf /tmp/* /var/cache/apt/*
+
+# 创建必要目录
+RUN mkdir -p /app/traces /app/logs /var/log/supervisor
+
+# 复制源码
+COPY . .
+
+# Supervisor 配置：管理 Xvfb + noVNC + 执行器
+COPY supervisord.conf /etc/supervisor/conf.d/executor.conf
+
+# noVNC 端口
+EXPOSE 6080
+
+# 默认环境变量（headed 模式）
+ENV BACKEND_URL=http://backend:8000 \
+    RABBITMQ_HOST=rabbitmq \
+    RABBITMQ_PORT=5672 \
+    RABBITMQ_USER=guest \
+    RABBITMQ_PASSWORD=guest \
+    PLAYWRIGHT_HEADLESS=false \
+    TRACE_ENABLED=true \
+    MAX_CONCURRENT=1 \
+    HEARTBEAT_INTERVAL=30 \
+    DISPLAY=:99
+
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/executor.conf"]

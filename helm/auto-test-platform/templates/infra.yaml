@@ -1,0 +1,148 @@
+{{- if .Values.redis.enabled }}
+# ---- Redis ----
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: redis
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.redis.persistence.storageClass }}
+  storageClassName: {{ .Values.redis.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: redis
+spec:
+  replicas: {{ .Values.redis.replicas }}
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: {{ include "auto-test.image" (dict "repository" .Values.redis.image.repository "tag" .Values.redis.image.tag "registry" .Values.global.imageRegistry) }}
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.redis.service.port }}
+          args: {{ toJson .Values.redis.args }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: {{ .Values.redis.service.port }}
+      targetPort: {{ .Values.redis.service.port }}
+  type: ClusterIP
+{{- end }}
+{{- if .Values.rabbitmq.enabled }}
+# ---- RabbitMQ ----
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rabbitmq-pvc
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: rabbitmq
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.rabbitmq.persistence.storageClass }}
+  storageClassName: {{ .Values.rabbitmq.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.rabbitmq.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: rabbitmq
+spec:
+  replicas: {{ .Values.rabbitmq.replicas }}
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: {{ include "auto-test.image" (dict "repository" .Values.rabbitmq.image.repository "tag" .Values.rabbitmq.image.tag "registry" .Values.global.imageRegistry) }}
+          imagePullPolicy: {{ .Values.rabbitmq.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.rabbitmq.service.amqpPort }}
+            - containerPort: {{ .Values.rabbitmq.service.managementPort }}
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: {{ .Values.rabbitmq.env.user | quote }}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: rabbitmq-password
+          volumeMounts:
+            - name: rabbitmq-data
+              mountPath: /var/lib/rabbitmq
+          resources:
+            {{- toYaml .Values.rabbitmq.resources | nindent 12 }}
+      volumes:
+        - name: rabbitmq-data
+          persistentVolumeClaim:
+            claimName: rabbitmq-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: rabbitmq
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: {{ .Values.rabbitmq.service.amqpPort }}
+      targetPort: {{ .Values.rabbitmq.service.amqpPort }}
+    - name: management
+      port: {{ .Values.rabbitmq.service.managementPort }}
+      targetPort: {{ .Values.rabbitmq.service.managementPort }}
+  type: ClusterIP
+{{- end }}

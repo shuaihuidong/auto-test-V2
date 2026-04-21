@@ -1,0 +1,90 @@
+{{- if .Values.backend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: backend
+    {{- include "auto-test.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      containers:
+        - name: backend
+          image: {{ include "auto-test.image" (dict "repository" .Values.backend.image.repository "tag" .Values.backend.image.tag "registry" .Values.global.imageRegistry) }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.service.port }}
+          env:
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: django-secret-key
+            - name: DEBUG
+              value: {{ .Values.backend.env.debug | quote }}
+            - name: REDIS_HOST
+              value: {{ .Values.backend.env.redisHost | quote }}
+            - name: RABBITMQ_HOST
+              value: {{ .Values.backend.env.rabbitmqHost | quote }}
+            - name: RABBITMQ_USER
+              value: {{ .Values.backend.env.rabbitmqUser | quote }}
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: rabbitmq-password
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secrets
+                  key: openai-api-key
+            - name: QWEN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secrets
+                  key: qwen-api-key
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import socket; s=socket.socket(); s.connect(('localhost',{{ .Values.backend.service.port }})); s.close()"
+            initialDelaySeconds: {{ .Values.backend.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.livenessProbe.periodSeconds }}
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import socket; s=socket.socket(); s.connect(('localhost',{{ .Values.backend.service.port }})); s.close()"
+            initialDelaySeconds: {{ .Values.backend.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.readinessProbe.periodSeconds }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: backend
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: {{ .Values.backend.service.port }}
+      targetPort: {{ .Values.backend.service.port }}
+  type: ClusterIP
+{{- end }}

@@ -1,0 +1,9 @@
+# ============================================
+# K8s 命名空间
+# ============================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: auto-test
+  labels:
+    app.kubernetes.io/name: auto-test-platform

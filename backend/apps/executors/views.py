@@ -659,6 +659,58 @@ class TaskQueueViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['post'], permission_classes=[])
+    def trace(self, request, pk=None):
+        """
+        接收执行器上报的 Playwright Trace 文件
+
+        执行器通过 multipart/form-data 上传 trace.zip，
+        保存到 /media/traces/ 目录，路径记录到执行结果中。
+        """
+        task = get_object_or_404(TaskQueue, pk=pk)
+
+        trace_file = request.FILES.get('trace')
+        if not trace_file:
+            return Response(
+                {'error': '缺少 trace 文件'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            import os
+            from django.conf import settings
+
+            traces_dir = os.path.join(settings.MEDIA_ROOT, 'traces')
+            os.makedirs(traces_dir, exist_ok=True)
+
+            filename = f"task_{task.id}_{timezone.now().strftime('%Y%m%d_%H%M%S')}.zip"
+            file_path = os.path.join(traces_dir, filename)
+
+            with open(file_path, 'wb') as f:
+                for chunk in trace_file.chunks():
+                    f.write(chunk)
+
+            # 将 trace 路径保存到执行结果中
+            if task.execution:
+                if not task.execution.result:
+                    task.execution.result = {}
+                task.execution.result['trace'] = f"/media/traces/{filename}"
+                task.execution.save(update_fields=['result'])
+
+            logger.info(f"任务 {task.id} Trace 已保存: {filename}")
+
+            return Response({
+                'message': 'Trace 已保存',
+                'path': f"/media/traces/{filename}",
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            logger.error(f"保存 Trace 失败: {e}")
+            return Response(
+                {'error': f'保存 Trace 失败: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """取消任务"""

@@ -12,6 +12,8 @@ from apps.projects.models import ProjectMember, Project
 from apps.users.permissions import IsScriptOwnerOrAdmin
 import json
 import yaml
+import asyncio
+from loguru import logger
 
 
 class ScriptFilterSet(FilterSet):
@@ -253,69 +255,91 @@ class ScriptViewSet(viewsets.ModelViewSet):
         return response
 
     def _generate_python_code(self, script):
-        """生成Python代码"""
-        code = f'''"""
-Auto-generated test script: {script.name}
-{script.description}
-"""
-
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import time
-
-# 初始化变量
-variables = {json.dumps(script.variables, indent=4)}
-
-# 初始化driver
-driver = webdriver.Chrome()
-driver.implicitly_wait(10)
-
-try:
-'''
+        """生成 Python Playwright 代码"""
+        lines = [
+            '"""',
+            f'Auto-generated test script: {script.name}',
+            f'{script.description}',
+            '"""',
+            '',
+            'import asyncio',
+            'from playwright.async_api import async_playwright',
+            '',
+            f'# 初始化变量',
+            f'variables = {json.dumps(script.variables, indent=4)}',
+            '',
+            'async def main():',
+            '    async with async_playwright() as p:',
+            '        browser = await p.chromium.launch(headless=False)',
+            '        page = await browser.new_page()',
+            '',
+        ]
 
         for i, step in enumerate(script.steps):
             step_type = step.get('type')
             params = step.get('params', {})
-            name = step.get('name', f'Step {i+1}')
+            name = step.get('name', f'Step {i + 1}')
 
-            code += f'    # {name}\n'
+            lines.append(f'        # {name}')
 
             if step_type == 'goto':
                 url = params.get('url', '')
-                code += f'    driver.get("{url}")\n'
+                lines.append(f'        await page.goto("{url}")')
 
             elif step_type == 'click':
                 locator = params.get('locator', {})
-                locator_type = locator.get('type', 'xpath')
-                locator_value = locator.get('value', '')
-                code += f'    driver.find_element(By.{locator_type.upper()}, "{locator_value}").click()\n'
+                locator_str = self._locator_to_playwright(locator)
+                lines.append(f'        await page.locator("{locator_str}").click()')
 
             elif step_type == 'input':
                 locator = params.get('locator', {})
-                locator_type = locator.get('type', 'xpath')
-                locator_value = locator.get('value', '')
+                locator_str = self._locator_to_playwright(locator)
                 value = params.get('value', '')
-                code += f'    element = driver.find_element(By.{locator_type.upper()}, "{locator_value}")\n'
-                code += f'    element.clear()\n'
-                code += f'    element.send_keys("{value}")\n'
+                lines.append(f'        await page.locator("{locator_str}").fill("{value}")')
 
-            elif step_type == 'assert':
-                assert_type = params.get('assert_type', 'text')
-                expected = params.get('expected', '')
-                code += f'    # Assert: {assert_type} == {expected}\n'
+            elif step_type == 'assert_text':
+                text = params.get('text', '')
+                lines.append(f'        # Assert text contains: {text}')
 
             elif step_type == 'wait':
                 duration = params.get('duration', 1)
-                code += f'    time.sleep({duration})\n'
+                lines.append(f'        await asyncio.sleep({duration})')
 
-            code += '\n'
+            elif step_type == 'wait_element':
+                locator = params.get('locator', {})
+                locator_str = self._locator_to_playwright(locator)
+                timeout = params.get('timeout', 10) * 1000
+                lines.append(f'        await page.locator("{locator_str}").wait_for(timeout={timeout})')
 
-        code += '''finally:
-    driver.quit()
-'''
-        return code
+            elif step_type == 'screenshot':
+                lines.append(f'        await page.screenshot(path="screenshot_{i}.png")')
+
+            lines.append('')
+
+        lines.extend([
+            '        await browser.close()',
+            '',
+            'if __name__ == "__main__":',
+            '    asyncio.run(main())',
+        ])
+
+        return '\n'.join(lines)
+
+    @staticmethod
+    def _locator_to_playwright(locator: dict) -> str:
+        """将平台定位器格式转为 Playwright 定位器字符串"""
+        if not locator:
+            return ''
+        loc_type = locator.get('type', 'css')
+        loc_value = locator.get('value', '')
+        if loc_type == 'xpath':
+            return f'xpath={loc_value}'
+        elif loc_type == 'id':
+            return f'#{loc_value}'
+        elif loc_type == 'text':
+            return f'text={loc_value}'
+        else:
+            return loc_value
 
     def _generate_java_code(self, script):
         """生成Java代码"""
@@ -489,7 +513,7 @@ const variables = {variables};
                 name=data.get('name', file.name),
                 description=data.get('description', ''),
                 type=data.get('type', 'web'),
-                framework=data.get('framework', 'selenium'),
+                framework=data.get('framework', 'playwright'),
                 steps=data.get('steps', []),
                 variables=data.get('variables', {}),
                 data_driven=data.get('data_driven', False),
@@ -501,3 +525,272 @@ const variables = {variables};
 
         except Exception as e:
             return Response({'error': f'导入失败: {str(e)}'}, status=400)
+
+    @action(detail=False, methods=['post'])
+    def nl2script(self, request):
+        """
+        自然语言转测试脚本 (NL2Script)
+
+        请求体:
+            {
+                "prompt": "打开百度搜索playwright",   # 必填
+                "context": "当前在登录页面",           # 可选，上下文
+                "save_to_project": 1,                 # 可选，保存到项目 ID
+                "script_name": "百度搜索测试"          # 可选，脚本名称
+            }
+
+        响应:
+            {
+                "steps": [...],          # 平台标准步骤
+                "token_usage": {...},    # Token 消耗
+                "model": "gpt-4o",
+                "provider": "openai",
+                "script_id": 123         # 如果 save_to_project 有值
+            }
+        """
+        user = request.user
+        if user.role == 'guest':
+            return Response(
+                {'error': '访客无权使用 AI 生成脚本'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        prompt = request.data.get('prompt', '').strip()
+        if not prompt:
+            return Response({'error': '请输入操作描述'}, status=400)
+
+        context = request.data.get('context', '')
+
+        try:
+            from ai_service import get_llm_gateway
+            from ai_service.nl2script import NL2ScriptService
+
+            gateway = get_llm_gateway()
+            service = NL2ScriptService(gateway)
+
+            # 异步调用 LLM
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(
+                    service.generate(prompt=prompt, context=context)
+                )
+            finally:
+                loop.close()
+
+            # 可选：直接保存为脚本
+            script_id = None
+            save_to_project = request.data.get('save_to_project')
+            if save_to_project:
+                script_name = request.data.get('script_name', f'AI生成 - {prompt[:20]}')
+                script = Script.objects.create(
+                    project_id=save_to_project,
+                    name=script_name,
+                    description=f'AI 自动生成: {prompt}',
+                    type='web',
+                    framework='playwright',
+                    steps=result['steps'],
+                    ai_generated=True,
+                    created_by=user,
+                )
+                script_id = script.id
+
+            return Response({
+                'steps': result['steps'],
+                'raw_steps': result.get('raw_steps', []),
+                'token_usage': result['token_usage'],
+                'model': result['model'],
+                'provider': result['provider'],
+                'script_id': script_id,
+            })
+
+        except Exception as e:
+            logger.error(f"NL2Script 失败: {e}")
+            return Response(
+                {'error': f'AI 生成失败: {str(e)}'},
+                status=500,
+            )
+
+    @action(detail=False, methods=['post'])
+    def nl2script_batch(self, request):
+        """
+        批量自然语言转测试脚本
+
+        请求体:
+        {
+            "prompts": ["打开百度搜索xx", "登录系统测试", ...],
+            "context": "当前在登录页面",
+            "save_to_project": 1,
+            "max_concurrency": 3
+        }
+        """
+        user = request.user
+        if user.role == 'guest':
+            return Response(
+                {'error': '访客无权使用 AI 生成脚本'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        prompts = request.data.get('prompts', [])
+        if not prompts or not isinstance(prompts, list):
+            return Response({'error': '请提供 prompts 列表'}, status=400)
+
+        if len(prompts) > 50:
+            return Response({'error': '单次批量最多 50 条'}, status=400)
+
+        context = request.data.get('context', '')
+        max_concurrency = min(request.data.get('max_concurrency', 3), 5)
+        save_to_project = request.data.get('save_to_project')
+
+        try:
+            from ai_service import get_llm_gateway
+            from ai_service.nl2script import NL2ScriptService
+
+            gateway = get_llm_gateway()
+            service = NL2ScriptService(gateway)
+
+            loop = asyncio.new_event_loop()
+            try:
+                results = loop.run_until_complete(
+                    service.batch_generate(
+                        prompts=prompts,
+                        context=context,
+                        max_concurrency=max_concurrency,
+                    )
+                )
+            finally:
+                loop.close()
+
+            # 可选：批量保存为脚本
+            total_tokens = 0
+            saved_ids = []
+            if save_to_project:
+                for r in results:
+                    if r.get('success') and r.get('steps'):
+                        script = Script.objects.create(
+                            project_id=save_to_project,
+                            name=f"AI生成 - {r['prompt'][:20]}",
+                            description=f"AI 批量生成: {r['prompt']}",
+                            type='web',
+                            framework='playwright',
+                            steps=r['steps'],
+                            ai_generated=True,
+                            created_by=user,
+                        )
+                        saved_ids.append(script.id)
+                        r['script_id'] = script.id
+
+            # 汇总 Token
+            for r in results:
+                total_tokens += r.get('token_usage', {}).get('total_tokens', 0)
+
+            return Response({
+                'results': results,
+                'total': len(results),
+                'success_count': sum(1 for r in results if r.get('success')),
+                'failed_count': sum(1 for r in results if not r.get('success')),
+                'total_tokens': total_tokens,
+                'saved_ids': saved_ids,
+            })
+
+        except Exception as e:
+            logger.error(f"批量 NL2Script 失败: {e}")
+            return Response(
+                {'error': f'批量生成失败: {str(e)}'},
+                status=500,
+            )
+
+    @action(detail=False, methods=['post'])
+    def sandbox_validate(self, request):
+        """
+        沙盒验证 - 对已有步骤做静态校验（不实际启动浏览器）
+
+        校验内容：步骤类型合法、定位器格式正确、必填参数存在、步骤顺序逻辑合理。
+        快速返回，不消耗 LLM Token。
+
+        请求体:
+        {
+            "steps": [...],
+            "url": "https://example.com"  // 可选，用于校验 goto 步骤
+        }
+
+        响应:
+        {
+            "valid": true/false,
+            "errors": [{"step_index": 0, "field": "...", "message": "..."}],
+            "warnings": [{"step_index": 2, "message": "..."}]
+        }
+        """
+        steps = request.data.get('steps', [])
+        if not steps:
+            return Response({'error': '请提供 steps'}, status=400)
+
+        valid_step_types = {
+            'goto', 'click', 'input', 'clear', 'select', 'checkbox',
+            'double_click', 'right_click', 'hover', 'assert_text',
+            'assert_title', 'assert_url', 'assert_element', 'assert_visible',
+            'wait', 'wait_element', 'screenshot', 'scroll', 'upload',
+            'download', 'refresh', 'back', 'forward',
+        }
+        requires_locator = {
+            'click', 'input', 'clear', 'select', 'checkbox', 'double_click',
+            'right_click', 'hover', 'assert_element', 'assert_visible',
+            'wait_element', 'scroll', 'upload',
+        }
+        requires_value = {'input', 'select', 'goto', 'assert_text', 'assert_title', 'assert_url'}
+
+        errors = []
+        warnings = []
+
+        for i, step in enumerate(steps):
+            step_type = step.get('type', '')
+            params = step.get('params', {})
+            name = step.get('name', f'步骤{i + 1}')
+
+            # 检查步骤类型
+            if not step_type:
+                errors.append({'step_index': i, 'field': 'type', 'message': f'"{name}" 缺少步骤类型'})
+            elif step_type not in valid_step_types:
+                errors.append({'step_index': i, 'field': 'type', 'message': f'未知步骤类型: {step_type}'})
+
+            # 检查需要定位器的步骤
+            if step_type in requires_locator:
+                locator = params.get('locator')
+                if not locator or not isinstance(locator, dict) or not locator.get('value'):
+                    errors.append({
+                        'step_index': i, 'field': 'locator',
+                        'message': f'"{name}" 需要有效的定位器',
+                    })
+
+            # 检查需要值的步骤
+            if step_type in requires_value:
+                value = params.get('value') or params.get('url') or params.get('text') or params.get('expected')
+                if not value:
+                    errors.append({
+                        'step_index': i, 'field': 'value',
+                        'message': f'"{name}" 需要提供值',
+                    })
+
+            # 建议性警告
+            if step_type == 'goto' and i > 0:
+                prev_type = steps[i - 1].get('type', '')
+                if prev_type not in ('goto', 'click', 'wait', 'wait_element'):
+                    warnings.append({
+                        'step_index': i,
+                        'message': f'建议在 goto 步骤前确保前序操作已完成',
+                    })
+
+            if step_type in ('click', 'input') and i > 0:
+                prev_type = steps[i - 1].get('type', '')
+                if prev_type == 'goto':
+                    warnings.append({
+                        'step_index': i,
+                        'message': f'goto 后建议加 wait_element 等待页面加载',
+                    })
+
+        return Response({
+            'valid': len(errors) == 0,
+            'error_count': len(errors),
+            'warning_count': len(warnings),
+            'errors': errors,
+            'warnings': warnings,
+        })

@@ -1,0 +1,54 @@
+# ============================================
+# 生产环境 values 覆盖
+# 使用方式: helm install -f values.yaml -f values-production.yaml my-release ./
+# ============================================
+
+global:
+  imageRegistry: ""  # 填入私有镜像仓库地址
+
+backend:
+  replicas: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  env:
+    debug: "False"
+
+frontend:
+  replicas: 3
+
+executor:
+  replicas: 3
+  hpa:
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilization: 60
+
+redis:
+  persistence:
+    size: 5Gi
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+rabbitmq:
+  persistence:
+    size: 20Gi
+  resources:
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+ingress:
+  host: test-platform.your-company.com
+  tls:
+    secretName: platform-tls-prod
+
+secrets:
+  djangoSecretKey: "CHANGE-ME-USE-VAULT-IN-PRODUCTION"
+  rabbitmqPassword: "CHANGE-ME-USE-VAULT-IN-PRODUCTION"

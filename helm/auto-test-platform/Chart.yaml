@@ -1,0 +1,13 @@
+apiVersion: v2
+name: auto-test-platform
+description: AI-powered automated testing platform (Helm Chart)
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
+keywords:
+  - testing
+  - automation
+  - playwright
+  - ai
+maintainers:
+  - name: auto-test-team

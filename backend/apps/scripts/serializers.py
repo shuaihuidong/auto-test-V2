@@ -38,7 +38,8 @@ class ScriptSerializer(serializers.ModelSerializer):
         fields = ['id', 'project', 'project_name', 'name', 'description', 'type',
                   'framework', 'steps', 'variables', 'timeout', 'retry_count', 'tags',
                   'is_module', 'module_name', 'data_source', 'data_source_name',
-                  'data_driven', 'created_by', 'created_by_name', 'step_count',
+                  'data_driven', 'ai_generated', 'heal_enabled',
+                  'created_by', 'created_by_name', 'step_count',
                   'created_at', 'updated_at']
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 

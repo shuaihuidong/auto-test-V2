@@ -259,6 +259,11 @@
       </div>
 
       <a-empty v-else description="暂无报告数据" />
+
+      <!-- 自愈日志面板 -->
+      <a-card v-if="executionId" title="智能自愈记录" style="margin-top: 16px;">
+        <HealLogPanel :execution-id="executionId" @applied="refreshReport" />
+      </a-card>
     </a-spin>
   </div>
 </template>
@@ -280,6 +285,7 @@ import {
 } from '@ant-design/icons-vue'
 import { getReport, downloadHtmlReport, generateReport } from '@/api/report'
 import type { Report } from '@/api/report'
+import HealLogPanel from '@/components/AI/HealLogPanel.vue'
 
 const router = useRouter()
 const route = useRoute()

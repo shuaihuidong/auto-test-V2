@@ -204,3 +204,27 @@ SESSION_COOKIE_AGE = 86400  # 24小时
 SESSION_SAVE_EVERY_REQUEST = True  # 每次请求都保存session
 SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_HTTPONLY = True
+
+# ============================================
+# AI Service 配置 (V2.0 LLM Gateway)
+# ============================================
+AI_SERVICE = {
+    # Provider 选择
+    'PRIMARY_PROVIDER': os.getenv('AI_PRIMARY_PROVIDER', 'openai'),
+    'FALLBACK_PROVIDER': os.getenv('AI_FALLBACK_PROVIDER', 'qwen'),
+
+    # OpenAI 兼容配置（也适用于 DeepSeek 等兼容接口）
+    'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY', ''),
+    'OPENAI_API_BASE': os.getenv('OPENAI_API_BASE', 'https://api.openai.com/v1'),
+    'OPENAI_MODEL': os.getenv('OPENAI_MODEL', 'gpt-4o'),
+
+    # 通义千问配置
+    'QWEN_API_KEY': os.getenv('QWEN_API_KEY', ''),
+    'QWEN_MODEL': os.getenv('QWEN_MODEL', 'qwen-max'),
+
+    # 通用参数
+    'MAX_RETRIES': int(os.getenv('AI_MAX_RETRIES', '3')),
+    'RETRY_BASE_DELAY': float(os.getenv('AI_RETRY_BASE_DELAY', '1.0')),
+    'TIMEOUT': int(os.getenv('AI_TIMEOUT', '60')),
+    'DEFAULT_MAX_TOKENS': int(os.getenv('AI_DEFAULT_MAX_TOKENS', '4096')),
+}

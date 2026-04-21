@@ -84,6 +84,89 @@ services:
       retries: 3
       start_period: 40s
 
+  # ============================================
+  # Playwright 容器化执行器（生产）
+  # 支持 scale 水平扩展：docker-compose up --scale executor=3
+  # ============================================
+  executor:
+    build:
+      context: ./executor-docker
+      dockerfile: Dockerfile
+    # 不固定 container_name，允许 scale 多实例
+    environment:
+      BACKEND_URL: http://backend:8000
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: guest
+      RABBITMQ_PASSWORD: guest
+      EXECUTOR_NAME: ${EXECUTOR_NAME:-docker-executor}
+      OWNER_USERNAME: ${OWNER_USERNAME:-}
+      MAX_CONCURRENT: ${EXECUTOR_MAX_CONCURRENT:-2}
+      HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-30}
+      PLAYWRIGHT_HEADLESS: "true"
+      TRACE_ENABLED: ${TRACE_ENABLED:-true}
+    volumes:
+      - executor_traces:/app/traces
+      - executor_logs:/app/logs
+    depends_on:
+      backend:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      replicas: ${EXECUTOR_REPLICAS:-2}
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    restart: unless-stopped
+    networks:
+      - auto-test-network
+
+  # ============================================
+  # Playwright 调试执行器（noVNC 可视化）
+  # 访问 http://localhost:6080 观察浏览器操作
+  # ============================================
+  executor-debug:
+    build:
+      context: ./executor-docker
+      dockerfile: Dockerfile.debug
+    container_name: auto-test-executor-debug
+    ports:
+      - "127.0.0.1:6080:6080"
+    environment:
+      BACKEND_URL: http://backend:8000
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: guest
+      RABBITMQ_PASSWORD: guest
+      EXECUTOR_NAME: ${EXECUTOR_DEBUG_NAME:-debug-executor}
+      OWNER_USERNAME: ${OWNER_USERNAME:-}
+      MAX_CONCURRENT: 1
+      HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-30}
+      PLAYWRIGHT_HEADLESS: "false"
+      TRACE_ENABLED: "true"
+    volumes:
+      - executor_traces:/app/traces
+    depends_on:
+      backend:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    profiles:
+      - debug
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+    restart: unless-stopped
+    networks:
+      - auto-test-network
+
   # Vue 前端 (HTTPS自动构建)
   frontend:
     build:
@@ -118,6 +201,10 @@ volumes:
   backend_db:
     driver: local
   backend_sessions:
+    driver: local
+  executor_traces:
+    driver: local
+  executor_logs:
     driver: local
 
 networks:

@@ -1,0 +1,154 @@
+# ============================================
+# Helm values: auto-test-platform
+# ============================================
+
+# -- Global
+global:
+  namespace: auto-test
+  imagePullSecrets: []
+  # 镜像仓库前缀，留空则使用本地镜像
+  imageRegistry: ""
+
+# -- 后端服务
+backend:
+  enabled: true
+  replicas: 2
+  image:
+    repository: auto-test-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readinessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  env:
+    debug: "False"
+    redisHost: redis
+    rabbitmqHost: rabbitmq
+    rabbitmqUser: guest
+
+# -- 前端服务
+frontend:
+  enabled: true
+  replicas: 2
+  image:
+    repository: auto-test-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# -- 执行器
+executor:
+  enabled: true
+  replicas: 2
+  image:
+    repository: auto-test-executor
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  env:
+    backendUrl: "http://backend:8000"
+    rabbitmqHost: rabbitmq
+    rabbitmqUser: guest
+    playwrightHeadless: "true"
+    traceEnabled: "true"
+    maxConcurrent: "2"
+  # HPA 自动伸缩
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilization: 70
+    targetMemoryUtilization: 80
+
+# -- Redis
+redis:
+  enabled: true
+  replicas: 1
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 1Gi
+  args: ["redis-server", "--appendonly", "yes"]
+
+# -- RabbitMQ
+rabbitmq:
+  enabled: true
+  replicas: 1
+  image:
+    repository: rabbitmq
+    tag: 3.12-management
+    pullPolicy: IfNotPresent
+  service:
+    amqpPort: 5672
+    managementPort: 15672
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 5Gi
+  env:
+    user: guest
+
+# -- Ingress
+ingress:
+  enabled: true
+  className: nginx
+  host: test-platform.example.com
+  tls:
+    enabled: true
+    secretName: platform-tls
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+# -- Secrets (仅用于演示，生产环境应使用外部 secret 管理)
+secrets:
+  djangoSecretKey: "change-me-in-production"
+  rabbitmqPassword: "guest"
+  openaiApiKey: ""
+  qwenApiKey: ""

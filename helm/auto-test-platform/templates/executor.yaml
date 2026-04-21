@@ -1,0 +1,86 @@
+{{- if .Values.executor.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: executor
+    {{- include "auto-test.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.executor.replicas }}
+  selector:
+    matchLabels:
+      app: executor
+  template:
+    metadata:
+      labels:
+        app: executor
+    spec:
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      containers:
+        - name: executor
+          image: {{ include "auto-test.image" (dict "repository" .Values.executor.image.repository "tag" .Values.executor.image.tag "registry" .Values.global.imageRegistry) }}
+          imagePullPolicy: {{ .Values.executor.image.pullPolicy }}
+          env:
+            - name: BACKEND_URL
+              value: {{ .Values.executor.env.backendUrl | quote }}
+            - name: RABBITMQ_HOST
+              value: {{ .Values.executor.env.rabbitmqHost | quote }}
+            - name: RABBITMQ_USER
+              value: {{ .Values.executor.env.rabbitmqUser | quote }}
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: rabbitmq-password
+            - name: PLAYWRIGHT_HEADLESS
+              value: {{ .Values.executor.env.playwrightHeadless | quote }}
+            - name: TRACE_ENABLED
+              value: {{ .Values.executor.env.traceEnabled | quote }}
+            - name: MAX_CONCURRENT
+              value: {{ .Values.executor.env.maxConcurrent | quote }}
+          resources:
+            {{- toYaml .Values.executor.resources | nindent 12 }}
+          volumeMounts:
+            - name: traces
+              mountPath: /app/traces
+            - name: logs
+              mountPath: /app/logs
+      volumes:
+        - name: traces
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+{{- if .Values.executor.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: executor-hpa
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: executor
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: executor
+  minReplicas: {{ .Values.executor.hpa.minReplicas }}
+  maxReplicas: {{ .Values.executor.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.executor.hpa.targetCPUUtilization }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.executor.hpa.targetMemoryUtilization }}
+{{- end }}
+{{- end }}

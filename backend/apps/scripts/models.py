@@ -72,7 +72,6 @@ class Script(models.Model):
     ]
 
     FRAMEWORK_CHOICES = [
-        ('selenium', 'Selenium'),
         ('playwright', 'Playwright'),
         ('appium', 'Appium'),
         ('httprunner', 'HttpRunner'),
@@ -87,7 +86,7 @@ class Script(models.Model):
     name = models.CharField(max_length=200, verbose_name='脚本名称')
     description = models.TextField(blank=True, verbose_name='描述')
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, verbose_name='脚本类型')
-    framework = models.CharField(max_length=20, choices=FRAMEWORK_CHOICES, verbose_name='测试框架')
+    framework = models.CharField(max_length=20, choices=FRAMEWORK_CHOICES, default='playwright', verbose_name='测试框架')
     steps = models.JSONField(default=list, verbose_name='测试步骤')
     variables = models.JSONField(default=dict, verbose_name='全局变量')
     timeout = models.IntegerField(default=30000, verbose_name='超时时间(ms)')
@@ -104,6 +103,10 @@ class Script(models.Model):
         verbose_name='数据源'
     )
     data_driven = models.BooleanField(default=False, verbose_name='是否参数化')
+    # V2.0 新增：AI 生成标记
+    ai_generated = models.BooleanField(default=False, verbose_name='AI生成')
+    # V2.0 新增：智能自愈开关
+    heal_enabled = models.BooleanField(default=False, verbose_name='启用自愈')
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
