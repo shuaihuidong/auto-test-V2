@@ -27,7 +27,7 @@ class LoginPage:
 
     def wait_for_redirect(self):
         """等待登录成功跳转到首页"""
-        self.page.wait_for_url("**/projects**", timeout=10000)
+        self.page.wait_for_url("**/projects**", timeout=20000)
 
     def get_error_text(self) -> str:
         self.error_message.wait_for(state="visible", timeout=5000)

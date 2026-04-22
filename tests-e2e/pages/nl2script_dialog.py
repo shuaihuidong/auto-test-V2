@@ -13,7 +13,7 @@ class NL2ScriptDialog:
         self.save_button = self.modal.locator("button", has_text="保存")
         self.close_button = self.modal.locator(".ant-modal-close")
         # 结果区域
-        self.result_area = self.modal.locator(".nl-result-area, .nl-steps")
+        self.result_area = self.modal.locator(".nl-steps")
         self.step_items = self.result_area.locator(".nl-step-item")
         self.provider_tag = self.modal.locator(".ant-tag", has_text="mock")
 
@@ -39,15 +39,16 @@ class NL2ScriptDialog:
 
     def save_as_script(self, script_name: str, project_id: int = None):
         # 填写脚本名
-        name_input = self.modal.locator("input[placeholder*='脚本名称']")
+        name_input = self.modal.locator("input[placeholder*='脚本名称'], input[placeholder*='名称']")
         if name_input.is_visible():
             name_input.fill(script_name)
-        # 选择项目
+        # 选择项目 — 点击第一个下拉选项即可（通常只有一个或已预选）
         if project_id:
-            project_select = self.modal.locator(".ant-select")
+            project_select = self.modal.locator(".ant-select").first
             if project_select.is_visible():
                 project_select.click()
-                self.page.locator(f".ant-select-item-option:has-text('{project_id}')").first.click()
+                # 等待下拉展开后选择第一个选项
+                self.page.locator(".ant-select-item-option").first.click()
         self.save_button.click()
 
     def close(self):

@@ -20,8 +20,8 @@ API_URL = "http://localhost:8000"      # 后端地址 (Django)
 TEST_USERS = {
     "super_admin": {"username": "admin", "password": "admin123"},
     "admin": {"username": "admin2", "password": "admin123"},
-    "tester": {"username": "tester1", "password": "test123"},
-    "guest": {"username": "guest1", "password": "guest123"},
+    "tester": {"username": "tester1", "password": "test123456"},
+    "guest": {"username": "guest1", "password": "guest123456"},
 }
 
 
@@ -114,6 +114,7 @@ def browser_context_args(browser_context_args):
         **browser_context_args,
         "viewport": {"width": 1440, "height": 900},
         "ignore_https_errors": True,
+        "base_url": BASE_URL,
     }
 
 
@@ -134,7 +135,7 @@ def tester_page(page: Page) -> Page:
     from pages.login_page import LoginPage
     login = LoginPage(page)
     login.goto()
-    login.login("tester1", "test123")
+    login.login("tester1", "test123456")
     login.wait_for_redirect()
     return page
 
@@ -145,7 +146,7 @@ def guest_page(page: Page) -> Page:
     from pages.login_page import LoginPage
     login = LoginPage(page)
     login.goto()
-    login.login("guest1", "guest123")
+    login.login("guest1", "guest123456")
     login.wait_for_redirect()
     return page
 
