@@ -9,7 +9,6 @@ from .models import Execution, HealLog
 from .serializers import ExecutionSerializer, ExecutionCreateSerializer, HealLogSerializer, HealLogCreateSerializer
 from apps.users.permissions import IsExecutionOwnerOrAdmin
 import time
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -639,28 +638,7 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     def heal(self, request, pk=None):
         """
         触发智能自愈 - 分析失败步骤并推荐替代定位器
-
-        请求体:
-        {
-            "script_id": 123,              # 必填
-            "step_index": 2,               # 必填
-            "error_message": "元素未找到",  # 必填
-            "dom_snapshot": "<html>..."     # 可选，DOM 快照
-        }
-
-        响应:
-        {
-            "heal_status": "success",
-            "original_locator": "xpath=//button[@class='submit']",
-            "suggested_locator": "[data-testid='login-btn']",
-            "suggested_locator_platform": {"type": "css", "value": "[data-testid='login-btn']"},
-            "locator_type": "data-testid",
-            "confidence": 0.95,
-            "reason": "...",
-            "auto_applied": true,
-            "heal_log_id": 456,
-            "token_usage": {...}
-        }
+        使用同步 httpx.Client 调用 LLM，避免 ASGI 异步上下文冲突
         """
         execution = self.get_object()
         user = request.user
@@ -683,30 +661,157 @@ class ExecutionViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            from ai_service import get_llm_gateway
-            from ai_service.healing import HealingService
+            from apps.scripts.models import Script
+            from ai_service.healing import (
+                HEAL_SYSTEM_PROMPT,
+                _extract_original_locator_info,
+                _suggested_locator_to_platform,
+            )
 
-            gateway = get_llm_gateway()
-            service = HealingService(gateway)
-
-            loop = asyncio.new_event_loop()
+            # ---- 同步 ORM 操作 ----
             try:
-                result = loop.run_until_complete(
-                    service.auto_heal_script(
-                        script_id=script_id,
-                        execution_id=execution.id,
-                        step_index=int(step_index),
-                        error_message=error_message,
-                        dom_snapshot=dom_snapshot,
-                    )
-                )
-            finally:
-                loop.close()
+                script = Script.objects.get(id=script_id)
+            except Script.DoesNotExist:
+                return Response({'error': f'脚本不存在: {script_id}'}, status=404)
+
+            steps = script.steps or []
+            step_index_int = int(step_index)
+            if step_index_int < 0 or step_index_int >= len(steps):
+                return Response({'error': f'步骤索引越界: {step_index_int}'}, status=400)
+
+            step = steps[step_index_int]
+            step_name = step.get("name", "")
+            original_locator = step.get("params", {}).get("locator", {})
+
+            # ---- 同步调用 LLM (避免 async 上下文冲突) ----
+            from django.conf import settings as django_settings
+            config = getattr(django_settings, "AI_SERVICE", {})
+            import httpx
+            import json as _json
+
+            api_base = config.get("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/")
+            api_key = config.get("OPENAI_API_KEY", "")
+            model = config.get("OPENAI_MODEL", "gpt-4o")
+            timeout = config.get("TIMEOUT", 60)
+
+            dom_preview = dom_snapshot[:8000] if len(dom_snapshot) > 8000 else dom_snapshot
+            locator_str = _extract_original_locator_info(original_locator)
+
+            user_prompt = (
+                f"请分析以下定位器失败案例：\n\n"
+                f"## 失败信息\n"
+                f"- 步骤名称: {step_name or '未命名步骤'}\n"
+                f"- 步骤索引: {step_index_int}\n"
+                f"- 原始定位器: {locator_str}\n"
+                f"- 错误消息: {error_message}\n\n"
+                f"## 当前页面 DOM 快照\n"
+                f"```html\n{dom_preview}\n```\n\n"
+                f"请推荐一个替代定位器。"
+            )
+
+            messages = [
+                {"role": "system", "content": HEAL_SYSTEM_PROMPT + "\n\n请严格以合法 JSON 格式输出，不要包含 markdown 代码块标记。"},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            url = f"{api_base}/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.2,
+                "max_tokens": 4096,
+            }
+
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            usage = data.get("usage", {})
+
+            # 清理并解析 JSON
+            content_clean = content.strip()
+            if content_clean.startswith("```"):
+                lines = content_clean.split("\n")
+                lines = [l for l in lines if not l.strip().startswith("```")]
+                content_clean = "\n".join(lines).strip()
+
+            parsed = _json.loads(content_clean)
+
+            suggested_str = parsed.get("suggested_locator", "")
+            locator_type = parsed.get("locator_type", "css")
+            suggested_platform = _suggested_locator_to_platform(suggested_str, locator_type)
+
+            heal_status_val = parsed.get("heal_status", "failed")
+            confidence = min(parsed.get("confidence", 0.0), 1.0)
+            heal_strategy = "llm_recommend"
+
+            # ---- 同步 ORM 写入 HealLog ----
+            heal_log = HealLog.objects.create(
+                script=script,
+                execution=execution,
+                step_index=step_index_int,
+                step_name=step_name,
+                original_locator=locator_str,
+                suggested_locator=suggested_str,
+                locator_type=locator_type,
+                heal_status=heal_status_val,
+                heal_strategy=heal_strategy,
+                confidence=confidence,
+                reason=parsed.get("reason", ""),
+                dom_snapshot=dom_snapshot[:5000],
+                llm_provider="openai",
+                token_consumed=usage.get("total_tokens", 0),
+                auto_applied=False,
+            )
+
+            # 自动应用逻辑
+            auto_applied = False
+            if (
+                heal_status_val == "success"
+                and confidence >= 0.8
+                and script.heal_enabled
+            ):
+                steps[step_index_int]["params"]["locator"] = suggested_platform
+                script.steps = steps
+                script.save(update_fields=["steps", "updated_at"])
+
+                heal_log.auto_applied = True
+                heal_log.save(update_fields=["auto_applied"])
+                auto_applied = True
+
+            result = {
+                "heal_status": heal_status_val,
+                "original_locator": locator_str,
+                "suggested_locator": suggested_str,
+                "suggested_locator_platform": suggested_platform,
+                "locator_type": locator_type,
+                "confidence": confidence,
+                "reason": parsed.get("reason", ""),
+                "target_element": parsed.get("target_element", ""),
+                "heal_strategy": heal_strategy,
+                "auto_applied": auto_applied,
+                "heal_log_id": heal_log.id,
+                "token_usage": {
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                },
+                "model": data.get("model", model),
+                "provider": "openai",
+            }
 
             return Response(result)
 
         except Exception as e:
             logger.error(f"自愈分析失败: {e}")
+            import traceback
+            traceback.print_exc()
             return Response(
                 {'error': f'自愈分析失败: {str(e)}'},
                 status=500,

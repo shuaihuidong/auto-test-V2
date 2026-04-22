@@ -275,6 +275,7 @@ data-testid → [data-testid=...]
 | `_generate_python_code()` 中 f-string `{{name}}` 输出为 `{name}` 而非变量值 | `scripts/views.py` | 整个方法改用 `lines = []` + `lines.append()` + `'\n'.join(lines)` |
 | `import_script` 默认 framework 为 `'selenium'` | `scripts/views.py` | 改为 `default='playwright'` |
 | Helm helper `auto-test.image` 中 `$.Values` 在 include dict 上下文中无法访问 | `templates/_helpers.tpl` | 改为显式传入 `registry` 参数，helper 内使用 `.registry` |
+| Heal API 在 Daphne (ASGI) 下报 "You cannot call this from an async context" | `executions/views.py` | heal 视图改为同步调用: 用 `httpx.Client` (同步) 替代 `httpx.AsyncClient` 链，ORM 操作直接在同步视图内完成 |
 
 ---
 
@@ -302,3 +303,6 @@ data-testid → [data-testid=...]
 | 2026-04-22 | 测试 | tests-e2e/ | E2E 测试对齐实际 API: 23 passed, 5 skipped (无 LLM Key), 4 error (无 pytest-playwright) |
 | 2026-04-22 | 配置 | settings.py | DB_PATH 支持环境变量覆盖，解决 Windows 本地运行问题 |
 | 2026-04-22 | 数据 | create_admin.py | 修正新建 admin 用户默认 role 为 guest (需手动改 super_admin) |
+| 2026-04-22 | Bug修复 | executions/views.py | Heal API ASGI async 冲突: 改用同步 httpx.Client 替代 async 链，解决 "You cannot call this from an async context" |
+| 2026-04-22 | AI配置 | settings.py / .env | 配置 GLM (智谱AI) 为 LLM Provider: OPENAI_API_BASE=https://open.bigmodel.cn/api/paas/v4, MODEL=glm-4-flash |
+| 2026-04-22 | 测试 | tests-e2e/ | E2E 全量通过 (含 GLM Key): 27 passed, 1 skipped, 4 error (UI 需 pytest-playwright) |
