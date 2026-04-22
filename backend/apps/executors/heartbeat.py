@@ -134,11 +134,30 @@ def executor_register(request):
         from django.contrib.auth import get_user_model
         User = get_user_model()
         owner = None
-        if owner_username:
+
+        # 优先使用已登录用户
+        if request.user and request.user.is_authenticated:
+            owner = request.user
+        elif owner_username:
             try:
                 owner = User.objects.get(username=owner_username)
             except User.DoesNotExist:
                 logger.warning(f"用户不存在: {owner_username}")
+
+        # 仍然支持 owner_id 字段（兼容旧版客户端）
+        if not owner:
+            owner_id = data.get('owner')
+            if owner_id:
+                try:
+                    owner = User.objects.get(id=owner_id)
+                except (User.DoesNotExist, ValueError):
+                    logger.warning(f"用户不存在: {owner_id}")
+
+        if not owner:
+            return Response(
+                {'error': '无法确定执行机所属用户，请提供 owner_username 或登录后注册'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # 查找或创建执行机
         defaults = {
@@ -146,11 +165,10 @@ def executor_register(request):
             'platform': platform,
             'browser_types': browser_types,
             'status': 'online',
-            'max_concurrent': 3,
+            'max_concurrent': data.get('max_concurrent', 3),
             'scope': 'global',
+            'owner': owner,
         }
-        if owner:
-            defaults['owner'] = owner
 
         executor, created = Executor.objects.get_or_create(
             uuid=executor_uuid,

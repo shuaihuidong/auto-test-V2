@@ -276,6 +276,8 @@ data-testid → [data-testid=...]
 | `import_script` 默认 framework 为 `'selenium'` | `scripts/views.py` | 改为 `default='playwright'` |
 | Helm helper `auto-test.image` 中 `$.Values` 在 include dict 上下文中无法访问 | `templates/_helpers.tpl` | 改为显式传入 `registry` 参数，helper 内使用 `.registry` |
 | Heal API 在 Daphne (ASGI) 下报 "You cannot call this from an async context" | `executions/views.py` | heal 视图改为同步调用: 用 `httpx.Client` (同步) 替代 `httpx.AsyncClient` 链，ORM 操作直接在同步视图内完成 |
+| Executor 注册时 owner 为 NULL 导致 NOT NULL 约束失败 (500) | `executors/heartbeat.py` | register 函数支持: 已登录用户 → request.user; 未登录 → owner_username/owner_id; 都无 → 返回 400 |
+| User.create_superuser 不自动设置 role='super_admin' | `users/models.py` | 新增 CustomUserManager: create_superuser 默认 role='super_admin'，create_user 默认 role='guest' |
 
 ---
 
@@ -306,3 +308,7 @@ data-testid → [data-testid=...]
 | 2026-04-22 | Bug修复 | executions/views.py | Heal API ASGI async 冲突: 改用同步 httpx.Client 替代 async 链，解决 "You cannot call this from an async context" |
 | 2026-04-22 | AI配置 | settings.py / .env | 配置 GLM (智谱AI) 为 LLM Provider: OPENAI_API_BASE=https://open.bigmodel.cn/api/paas/v4, MODEL=glm-4-flash |
 | 2026-04-22 | 测试 | tests-e2e/ | E2E 全量通过 (含 GLM Key): 27 passed, 1 skipped, 4 error (UI 需 pytest-playwright) |
+| 2026-04-22 | Bug修复 | executors/heartbeat.py | Executor 注册 owner NOT NULL: 支持已登录用户自动绑定 owner + 兼容 owner_username/owner_id |
+| 2026-04-22 | Bug修复 | users/models.py | 新增 CustomUserManager: create_superuser 自动设置 role='super_admin' |
+| 2026-04-22 | Bug修复 | tests-e2e/test_executor_flow.py | 注册测试用例: 字段名对齐 (executor_name/owner_username)，去掉 pytest.skip |
+| 2026-04-22 | 测试 | tests-e2e/ | E2E 全量通过: 28 passed, 0 skipped, 0 failed (4 UI tests 需前端 dev server) |

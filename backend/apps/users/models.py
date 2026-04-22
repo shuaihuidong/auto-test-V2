@@ -1,5 +1,22 @@
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+
+
+class CustomUserManager(BaseUserManager):
+    """自定义用户管理器 - create_superuser 自动设置 role"""
+
+    def create_user(self, username, email=None, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', False)
+        extra_fields.setdefault('is_superuser', False)
+        if not extra_fields.get('role'):
+            extra_fields.setdefault('role', 'guest')
+        return super().create_user(username, email, password, **extra_fields)
+
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('role', 'super_admin')
+        return super().create_superuser(username, email, password, **extra_fields)
 
 
 class User(AbstractUser):
@@ -20,6 +37,8 @@ class User(AbstractUser):
     rabbitmq_password = models.CharField(max_length=500, null=True, blank=True,
                                         verbose_name='RabbitMQ密码（加密）')
     rabbitmq_enabled = models.BooleanField(default=False, verbose_name='启用RabbitMQ')
+
+    objects = CustomUserManager()
 
     class Meta:
         db_table = 'users_user'

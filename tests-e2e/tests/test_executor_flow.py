@@ -18,17 +18,16 @@ class TestExecutorRegister:
             f"{api_client.base_url.replace('/api', '')}/api/executor/register/",
             json={
                 "executor_uuid": executor_uuid,
-                "name": f"E2E执行器_{int(time.time())}",
+                "executor_name": f"E2E执行器_{int(time.time())}",
                 "platform": "linux",
                 "max_concurrent": 2,
-                "hostname": "e2e-test",
-                "owner": 1,  # 关联 admin 用户 ID
+                "owner_username": "admin",
             },
         )
-        # 注册成功 200/201 或参数不完整 400, 不应有 500
-        # owner_id 非空约束: 如果后端未处理则 500, 记录为已知问题
-        if resp.status_code == 500:
-            pytest.skip(f"执行器注册 API 需要后端适配: {resp.json().get('error', '')}")
+        assert resp.status_code == 200, f"注册失败: {resp.status_code} {resp.text}"
+        data = resp.json()
+        assert data["success"] is True
+        assert "executor_id" in data
 
     def test_heartbeat_report(self, api_client):
         """API-EXC-002: 心跳上报"""
