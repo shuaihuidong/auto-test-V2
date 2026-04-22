@@ -124,26 +124,23 @@ class TestNL2ScriptUI:
         assert step_count >= 2, f"Expected >=2 steps, got {step_count}"
         dialog.close()
 
-    @pytest.mark.skip(reason="POM 保存操作与实际 modal 交互需对齐，API 层 save 已验证通过")
     def test_nl2script_save(self, authenticated_page, test_project):
-        """UI-AI-002: 生成后保存"""
+        """UI-AI-002: 选中项目后生成会自动保存，出现"编辑脚本"按钮"""
         script_list = ScriptListPage(authenticated_page)
         script_list.goto(test_project["id"])
 
         dialog = NL2ScriptDialog(authenticated_page)
         script_list.open_nl2script_dialog()
         dialog.input_prompt("打开百度搜索playwright")
+
+        # 选择项目后生成，API 会自动保存脚本
+        authenticated_page.wait_for_timeout(1000)
+        dialog.select_project(test_project["name"])
         dialog.click_generate()
 
-        script_name = f"AI保存脚本_{int(time.time())}"
-        dialog.save_as_script(script_name, test_project["id"])
-
-        # 等待 modal 关闭和列表刷新
-        authenticated_page.wait_for_timeout(3000)
-        # 刷新列表确保新脚本显示
-        authenticated_page.reload()
-        authenticated_page.wait_for_load_state("networkidle")
-        assert script_list.has_script(script_name)
+        # 验证自动保存成功 — 出现"编辑脚本"按钮 (而非"保存为脚本")
+        edit_btn = dialog.modal.locator("button", has_text="编辑脚本")
+        expect(edit_btn).to_be_visible(timeout=10000)
 
 
 class TestSelfHealingAPI:
