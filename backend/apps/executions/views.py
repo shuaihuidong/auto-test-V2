@@ -686,6 +686,15 @@ class ExecutionViewSet(viewsets.ModelViewSet):
             # ---- 同步调用 LLM (避免 async 上下文冲突) ----
             from django.conf import settings as django_settings
             config = getattr(django_settings, "AI_SERVICE", {})
+
+            # 检查 AI 是否已配置
+            api_key = config.get("OPENAI_API_KEY", "")
+            if not api_key or not api_key.strip():
+                return Response(
+                    {'error': 'AI 服务未配置，请在管理后台设置 LLM API Key'},
+                    status=503,
+                )
+
             import httpx
             import json as _json
 

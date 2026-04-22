@@ -562,8 +562,14 @@ const variables = {variables};
         context = request.data.get('context', '')
 
         try:
-            from ai_service import get_llm_gateway
+            from ai_service import get_llm_gateway, is_ai_configured
             from ai_service.nl2script import NL2ScriptService
+
+            if not is_ai_configured():
+                return Response(
+                    {'error': 'AI 服务未配置，请在管理后台设置 LLM API Key'},
+                    status=503,
+                )
 
             gateway = get_llm_gateway()
             service = NL2ScriptService(gateway)
@@ -642,8 +648,14 @@ const variables = {variables};
         save_to_project = request.data.get('save_to_project')
 
         try:
-            from ai_service import get_llm_gateway
+            from ai_service import get_llm_gateway, is_ai_configured
             from ai_service.nl2script import NL2ScriptService
+
+            if not is_ai_configured():
+                return Response(
+                    {'error': 'AI 服务未配置，请在管理后台设置 LLM API Key'},
+                    status=503,
+                )
 
             gateway = get_llm_gateway()
             service = NL2ScriptService(gateway)

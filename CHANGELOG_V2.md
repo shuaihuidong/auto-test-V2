@@ -278,6 +278,7 @@ data-testid → [data-testid=...]
 | Heal API 在 Daphne (ASGI) 下报 "You cannot call this from an async context" | `executions/views.py` | heal 视图改为同步调用: 用 `httpx.Client` (同步) 替代 `httpx.AsyncClient` 链，ORM 操作直接在同步视图内完成 |
 | Executor 注册时 owner 为 NULL 导致 NOT NULL 约束失败 (500) | `executors/heartbeat.py` | register 函数支持: 已登录用户 → request.user; 未登录 → owner_username/owner_id; 都无 → 返回 400 |
 | User.create_superuser 不自动设置 role='super_admin' | `users/models.py` | 新增 CustomUserManager: create_superuser 默认 role='super_admin'，create_user 默认 role='guest' |
+| AI 未配置时 NL2Script/Heal 返回 500 不友好 | `ai_service/__init__.py` + views | 新增 `is_ai_configured()`，无 API Key 时返回 503 + 友好提示 |
 
 ---
 
@@ -285,7 +286,7 @@ data-testid → [data-testid=...]
 
 1. **数据库**: 当前使用 SQLite，生产环境建议切换 PostgreSQL
 2. **Secrets 管理**: K8s Secrets 和 docker-compose .env 中的密钥为明文，生产应使用 Vault/External Secrets
-3. **AI 服务未配置时不影响平台运行**，但 NL2Script / Self-healing 相关 API 会返回错误
+3. **AI 服务未配置时不影响平台运行**，NL2Script/Self-healing API 返回 503 + 友好提示（已修复）
 4. **executor-client/ (PyQt6)** 未删除，仍可与 V2.0 并存消费 MQ 任务
 5. **Playwright Trace 文件** 存储在 emptyDir (K8s) 或 Docker volume 中，Pod 重启后丢失，需对接对象存储
 

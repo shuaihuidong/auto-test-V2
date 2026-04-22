@@ -35,3 +35,17 @@ def get_llm_gateway() -> LLMGateway:
     if _gateway_instance is None:
         _gateway_instance = LLMGateway.from_settings()
     return _gateway_instance
+
+
+def is_ai_configured() -> bool:
+    """检查 AI 服务是否已配置（API Key 非空）"""
+    from django.conf import settings
+    config = getattr(settings, "AI_SERVICE", {})
+    primary = config.get("PRIMARY_PROVIDER", "openai")
+    key_mapping = {
+        "openai": "OPENAI_API_KEY",
+        "qwen": "QWEN_API_KEY",
+    }
+    key_name = key_mapping.get(primary, "OPENAI_API_KEY")
+    api_key = config.get(key_name, "")
+    return bool(api_key and api_key.strip())
