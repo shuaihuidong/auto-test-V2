@@ -314,3 +314,4 @@ data-testid → [data-testid=...]
 | 2026-04-22 | 测试 | tests-e2e/ | E2E 全量通过: 28 passed, 0 skipped, 0 failed (4 UI tests 需前端 dev server) |
 | 2026-04-22 | 测试 | tests-e2e/ | UI E2E 测试对齐: 安装 pytest-playwright + Chromium, 配置 base_url, 修复 POM selector |
 | 2026-04-22 | 测试 | tests-e2e/ | 全套 E2E 测试最终结果: 37 passed, 3 skipped, 0 failed |
+| 2026-04-22 | 测试 | tests-e2e/ | POM 对齐前端 DOM: 40 passed, 0 failed, 0 skipped (API + UI 全覆盖) |
