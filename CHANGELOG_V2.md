@@ -312,3 +312,5 @@ data-testid → [data-testid=...]
 | 2026-04-22 | Bug修复 | users/models.py | 新增 CustomUserManager: create_superuser 自动设置 role='super_admin' |
 | 2026-04-22 | Bug修复 | tests-e2e/test_executor_flow.py | 注册测试用例: 字段名对齐 (executor_name/owner_username)，去掉 pytest.skip |
 | 2026-04-22 | 测试 | tests-e2e/ | E2E 全量通过: 28 passed, 0 skipped, 0 failed (4 UI tests 需前端 dev server) |
+| 2026-04-22 | 测试 | tests-e2e/ | UI E2E 测试对齐: 安装 pytest-playwright + Chromium, 配置 base_url, 修复 POM selector |
+| 2026-04-22 | 测试 | tests-e2e/ | 全套 E2E 测试最终结果: 37 passed, 3 skipped, 0 failed |
