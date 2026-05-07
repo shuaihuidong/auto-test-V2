@@ -55,7 +55,7 @@ export interface Script {
   name: string
   description: string
   type: 'web' | 'mobile' | 'api'
-  framework: 'selenium' | 'playwright' | 'appium' | 'httprunner'
+  framework: 'playwright' | 'appium' | 'httprunner'
   steps: TestStep[]
   variables?: Record<string, any>
   timeout?: number
@@ -78,7 +78,7 @@ export interface ScriptForm {
   name: string
   description: string
   type: 'web' | 'mobile' | 'api'
-  framework: 'selenium' | 'playwright' | 'appium' | 'httprunner'
+  framework: 'playwright' | 'appium' | 'httprunner'
   steps: TestStep[]
   variables?: Record<string, any>
   timeout?: number

@@ -134,6 +134,30 @@ rabbitmq:
   env:
     user: guest
 
+# -- MinIO Object Storage (可选, 用于 Trace 持久化)
+minio:
+  enabled: false
+  image:
+    repository: minio/minio
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    apiPort: 9000
+    consolePort: 9001
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 10Gi
+  env:
+    accessKey: "minioadmin"
+
 # -- Ingress
 ingress:
   enabled: true
@@ -146,9 +170,14 @@ ingress:
     nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
 
-# -- Secrets (仅用于演示，生产环境应使用外部 secret 管理)
+# -- Secrets (仅用于演示，生产环境应使用外部 secret 管理或 generate_secrets.sh)
+# 运行 scripts/generate_secrets.sh 可自动生成安全密钥到 .env 文件
+# K8s 部署时建议使用: External Secrets Operator / Sealed Secrets / Vault
 secrets:
   djangoSecretKey: "change-me-in-production"
   rabbitmqPassword: "guest"
+  postgresPassword: "postgres"
+  minioSecretKey: "minioadmin"
+  rabbitmqEncryptionKey: ""
   openaiApiKey: ""
   qwenApiKey: ""

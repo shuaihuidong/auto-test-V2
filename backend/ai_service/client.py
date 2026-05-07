@@ -96,6 +96,27 @@ class LLMGateway:
         )
 
     @classmethod
+    def from_config(cls, config: dict) -> "LLMGateway":
+        """从配置字典创建 Gateway 实例（用于 DB 配置热加载）"""
+        primary_name = config.get("PRIMARY_PROVIDER", "openai")
+        primary = cls._create_provider(primary_name, config)
+
+        fallback_name = config.get("FALLBACK_PROVIDER", "")
+        fallback = None
+        if fallback_name and fallback_name != primary_name:
+            try:
+                fallback = cls._create_provider(fallback_name, config)
+            except Exception as e:
+                logger.warning(f"备用 Provider ({fallback_name}) 初始化失败: {e}")
+
+        return cls(
+            primary_provider=primary,
+            fallback_provider=fallback,
+            max_retries=config.get("MAX_RETRIES", 3),
+            retry_base_delay=config.get("RETRY_BASE_DELAY", 1.0),
+        )
+
+    @classmethod
     def _create_provider(cls, name: str, config: Dict[str, Any]) -> BaseLLMProvider:
         """根据配置创建 Provider 实例"""
         provider_class = PROVIDER_REGISTRY.get(name)
@@ -255,7 +276,12 @@ class LLMGateway:
             except AIProviderError as e:
                 last_error = e
                 if _is_retryable(e) and attempt < self.max_retries - 1:
-                    delay = self.retry_base_delay * (2 ** attempt)
+                    # 429 限流使用更长延迟
+                    is_429 = '429' in str(e) or '并发' in str(e) or '频率' in str(e)
+                    if is_429:
+                        delay = 10 * (2 ** attempt)
+                    else:
+                        delay = self.retry_base_delay * (2 ** attempt)
                     logger.warning(
                         f"Provider {provider.provider_name} 调用失败 (尝试 {attempt + 1}/{self.max_retries})，"
                         f"{delay:.1f}s 后重试: {e}"

@@ -23,21 +23,21 @@
           <template #icon><ProfileOutlined /></template>
           计划管理
         </a-menu-item>
-        <a-menu-item key="executors" @click="$router.push('/executors')">
-          <template #icon><CloudServerOutlined /></template>
-          执行机管理
-        </a-menu-item>
-        <a-menu-item key="variables" @click="$router.push('/variables')">
-          <template #icon><DatabaseOutlined /></template>
-          变量管理
-        </a-menu-item>
         <a-menu-item key="executions" @click="$router.push('/executions')">
           <template #icon><PlayCircleOutlined /></template>
           执行记录
         </a-menu-item>
+        <a-menu-item key="batch-tasks" @click="$router.push('/batch-tasks')">
+          <template #icon><ThunderboltOutlined /></template>
+          AI 任务中心
+        </a-menu-item>
         <a-menu-item key="account-role" @click="$router.push('/account-role')" v-if="isTesterOrAdmin">
           <template #icon><TeamOutlined /></template>
           账号角色管理
+        </a-menu-item>
+        <a-menu-item key="ai-settings" @click="$router.push('/ai-settings')" v-if="isAdmin">
+          <template #icon><RobotOutlined /></template>
+          AI 设置
         </a-menu-item>
         <a-menu-item key="help" @click="$router.push('/help')">
           <template #icon><QuestionCircleOutlined /></template>
@@ -100,12 +100,11 @@ import {
   ProjectOutlined,
   FileTextOutlined,
   PlayCircleOutlined,
-  CloudServerOutlined,
-  DatabaseOutlined,
   ProfileOutlined,
-  AppstoreOutlined,
   TeamOutlined,
+  RobotOutlined,
   QuestionCircleOutlined,
+  ThunderboltOutlined,
   UserOutlined,
   DownOutlined,
   LogoutOutlined,

@@ -51,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, useSlots } from 'vue'
 
 interface Props {
   modelValue?: string | number
@@ -89,6 +89,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<Emits>()
 
+const slots = useSlots()
 const inputRef = ref<HTMLInputElement>()
 const focused = ref(false)
 
@@ -106,8 +107,8 @@ const inputWrapperClasses = computed(() => [
 const inputClasses = computed(() => [
   'simple-input__field',
   {
-    'simple-input__field--with-prefix': !!props.$slots?.prefix,
-    'simple-input__field--with-suffix': !!props.$slots?.suffix || showClearButton.value
+    'simple-input__field--with-prefix': !!slots.prefix,
+    'simple-input__field--with-suffix': !!slots.suffix || showClearButton.value
   }
 ])
 

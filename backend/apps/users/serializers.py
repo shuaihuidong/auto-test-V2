@@ -11,11 +11,8 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'role', 'role_display', 'is_active', 'rabbitmq_enabled', 'created_at', 'updated_at']
+        fields = ['id', 'username', 'email', 'role', 'role_display', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at', 'role_display']
-        extra_kwargs = {
-            'rabbitmq_enabled': {'required': False}
-        }
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
@@ -24,7 +21,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'password', 'password_confirm', 'role', 'rabbitmq_enabled']
+        fields = ['id', 'username', 'email', 'password', 'password_confirm', 'role']
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password_confirm']:

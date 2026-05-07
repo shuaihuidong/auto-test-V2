@@ -139,6 +139,8 @@ class HealingService:
         dom_snapshot: str,
         step_name: str = "",
         step_index: int = -1,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         分析失败步骤并推荐替代定位器
@@ -149,10 +151,26 @@ class HealingService:
             dom_snapshot: DOM 快照 HTML
             step_name: 步骤名称
             step_index: 步骤索引
+            system_prompt: 自定义系统提示词，None 时从 DB 读取
+            temperature: 温度参数，None 时从 DB 读取
 
         Returns:
             自愈分析结果（兼容 HealLog 字段）
         """
+        # 获取 prompt 和 temperature
+        if system_prompt is None or temperature is None:
+            try:
+                from apps.settings.resolver import get_active_prompt
+                db_prompt, db_temp = get_active_prompt('healing')
+                if system_prompt is None:
+                    system_prompt = db_prompt
+                if temperature is None:
+                    temperature = db_temp
+            except Exception:
+                if system_prompt is None:
+                    system_prompt = HEAL_SYSTEM_PROMPT
+                if temperature is None:
+                    temperature = 0.2
         # 如果 DOM 快照太长，截取前 8000 字符（控制 Token 消耗）
         dom_preview = dom_snapshot[:8000] if len(dom_snapshot) > 8000 else dom_snapshot
 
@@ -178,8 +196,8 @@ class HealingService:
         # 调用 LLM
         response = await self.gateway.call_json(
             prompt=prompt,
-            system_prompt=HEAL_SYSTEM_PROMPT,
-            temperature=0.2,  # 低温度，保证分析稳定性
+            system_prompt=system_prompt,
+            temperature=temperature,
         )
 
         parsed = response.raw_response.get("parsed_json", {})

@@ -157,9 +157,9 @@ class Execution(models.Model):
                     date_prefix = now.strftime('%Y%m%d')  # 8位
 
                     # 使用 select_for_update 锁定查询，防止并发冲突
+                    # display_id 在全表范围内必须唯一，不能按 execution_type 分开编号。
                     max_display_id = Execution.objects.filter(
                         display_id__startswith=date_prefix,
-                        execution_type=self.execution_type
                     ).select_for_update().order_by('-display_id').values_list('display_id', flat=True).first()
 
                     if max_display_id:

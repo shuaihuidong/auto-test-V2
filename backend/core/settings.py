@@ -1,12 +1,19 @@
-"""
+﻿"""
 Django settings for auto test platform project.
 """
 
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load local environment variables when present.
+# Existing process environment values still win.
+load_dotenv(BASE_DIR.parent / '.env')
+load_dotenv(BASE_DIR / '.env')
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY') or os.getenv('SECRET_KEY', 'django-insecure-dev-key-change-in-production')
@@ -14,27 +21,33 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY') or os.getenv('SECRET_KEY', 'django-i
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-# 生产环境密钥安全检查
+# Production secret key checks.
 if not DEBUG:
     if not os.getenv('DJANGO_SECRET_KEY') and not os.getenv('SECRET_KEY'):
         raise ValueError(
-            "生产环境必须设置 DJANGO_SECRET_KEY 或 SECRET_KEY 环境变量！"
+            "Production requires DJANGO_SECRET_KEY or SECRET_KEY to be set."
         )
     if SECRET_KEY.startswith('django-insecure-'):
         raise ValueError(
-            "生产环境不能使用默认的insecure密钥！请设置安全的SECRET_KEY。"
+            "Production cannot use the default insecure secret key. Set a secure SECRET_KEY."
         )
     if len(SECRET_KEY) < 32:
         raise ValueError(
-            "SECRET_KEY 长度必须至少32个字符！"
+            "SECRET_KEY must be at least 32 characters long."
         )
 
-# Allowed hosts - 支持从环境变量读取，用逗号分隔
+# Allowed hosts can be overridden with a comma-separated environment variable.
 ALLOWED_HOSTS_ENV = os.getenv('DJANGO_ALLOWED_HOSTS', '*')
 if ALLOWED_HOSTS_ENV == '*':
     ALLOWED_HOSTS = ['*']
 else:
     ALLOWED_HOSTS = [h.strip() for h in ALLOWED_HOSTS_ENV.split(',')]
+
+SETTINGS_MODULE = os.getenv('DJANGO_SETTINGS_MODULE', '')
+if not DEBUG and ALLOWED_HOSTS == ['*'] and not SETTINGS_MODULE.endswith('settings_prod'):
+    raise ValueError(
+        "Production requires DJANGO_ALLOWED_HOSTS to be set and cannot use '*' as a wildcard."
+    )
 
 # Application definition
 INSTALLED_APPS = [
@@ -53,9 +66,11 @@ INSTALLED_APPS = [
     'apps.plans',
     'apps.scripts',
     'apps.executions',
-    'apps.executors',
+    'apps.scheduler',
+    'apps.executors',  # Kept for WebSocket routing only
     'apps.reports',
     'apps.drivers',
+    'apps.settings',
 ]
 
 MIDDLEWARE = [
@@ -90,13 +105,39 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-# Database
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': Path(os.getenv('DB_PATH', '/app/db/db.sqlite3')),  # 本地测试: DB_PATH=db/db.sqlite3
+# Database - 鏀寔 DB_ENGINE 鐜鍙橀噺鍔ㄦ€佸垏鎹?
+DB_ENGINE = os.getenv('DB_ENGINE', 'sqlite3').lower()
+
+if DB_ENGINE == 'postgresql':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME', 'auto_test_platform'),
+            'USER': os.getenv('DB_USER', 'postgres'),
+            'PASSWORD': os.getenv('DB_PASSWORD', ''),
+            'HOST': os.getenv('DB_HOST', 'localhost'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+        }
     }
-}
+elif DB_ENGINE == 'mysql':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.getenv('DB_NAME', 'auto_test_platform'),
+            'USER': os.getenv('DB_USER', 'root'),
+            'PASSWORD': os.getenv('DB_PASSWORD', ''),
+            'HOST': os.getenv('DB_HOST', 'localhost'),
+            'PORT': os.getenv('DB_PORT', '3306'),
+        }
+    }
+else:
+    # SQLite (榛樿)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': Path(os.getenv('DB_PATH', '/app/db/db.sqlite3')),  # 鏈湴娴嬭瘯: DB_PATH=db/db.sqlite3
+        }
+    }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -132,7 +173,7 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
 }
 
-# CORS settings - 支持从环境变量读取
+# CORS settings - 鏀寔浠庣幆澧冨彉閲忚鍙?
 CORS_ALLOWED_ORIGINS_ENV = os.getenv('CORS_ALLOWED_ORIGINS', '')
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
@@ -166,65 +207,76 @@ os.makedirs(SCREENSHOTS_ROOT, exist_ok=True)
 # Channels settings
 ASGI_APPLICATION = 'core.asgi.application'
 
-# Channel层配置 - 使用Redis支持多进程部署
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [(os.getenv('REDIS_HOST', '127.0.0.1'), int(os.getenv('REDIS_PORT', 6379)))],
+# Channel layer config.
+# Local mode can switch to in-memory transport to avoid requiring Redis.
+CHANNEL_LAYER_BACKEND = os.getenv('CHANNEL_LAYER_BACKEND', 'redis').lower()
+if CHANNEL_LAYER_BACKEND == 'inmemory':
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
         },
-    },
-}
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [(os.getenv('REDIS_HOST', '127.0.0.1'), int(os.getenv('REDIS_PORT', 6379)))],
+            },
+        },
+    }
 
-# RabbitMQ settings
-RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', '127.0.0.1')
-RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', 5672))
-RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'guest')
-RABBITMQ_PASSWORD = os.getenv('RABBITMQ_PASSWORD', 'guest')
-RABBITMQ_VHOST = os.getenv('RABBITMQ_VHOST', '/')
-
-# RabbitMQ密码加密密钥（生产环境必须设置）
-RABBITMQ_ENCRYPTION_KEY = os.getenv('RABBITMQ_ENCRYPTION_KEY')
-if not RABBITMQ_ENCRYPTION_KEY:
-    # 开发环境使用默认密钥（生产环境必须设置）
-    if DEBUG:
-        # 生成一个新的Fernet密钥作为开发环境默认值
-        RABBITMQ_ENCRYPTION_KEY = 'KI0HBM0qO18jJvi06PWPxS7rqYCbu17BOisPeKWPEOo='
-    else:
-        raise ValueError(
-            "生产环境必须设置 RABBITMQ_ENCRYPTION_KEY 环境变量！\n"
-            "生成密钥命令: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-        )
-
-# Session settings - 使用文件存储以避免容器重启导致session丢失
+# Session settings - use file storage to avoid losing sessions on restart
 SESSION_ENGINE = 'django.contrib.sessions.backends.file'
 SESSION_FILE_PATH = BASE_DIR / 'sessions'
 os.makedirs(SESSION_FILE_PATH, exist_ok=True)
-SESSION_COOKIE_AGE = 86400  # 24小时
-SESSION_SAVE_EVERY_REQUEST = True  # 每次请求都保存session
+SESSION_COOKIE_AGE = 86400  # 24灏忔椂
+SESSION_SAVE_EVERY_REQUEST = True  # 姣忔璇锋眰閮戒繚瀛榮ession
 SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_HTTPONLY = True
 
 # ============================================
-# AI Service 配置 (V2.0 LLM Gateway)
+# AI Service 閰嶇疆 (V2.0 LLM Gateway)
 # ============================================
 AI_SERVICE = {
-    # Provider 选择
+    # Provider 閫夋嫨
     'PRIMARY_PROVIDER': os.getenv('AI_PRIMARY_PROVIDER', 'openai'),
     'FALLBACK_PROVIDER': os.getenv('AI_FALLBACK_PROVIDER', 'qwen'),
 
-    # OpenAI 兼容配置（也适用于 DeepSeek 等兼容接口）
+    # OpenAI 鍏煎閰嶇疆锛堜篃閫傜敤浜?DeepSeek 绛夊吋瀹规帴鍙ｏ級
     'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY', ''),
     'OPENAI_API_BASE': os.getenv('OPENAI_API_BASE', 'https://api.openai.com/v1'),
     'OPENAI_MODEL': os.getenv('OPENAI_MODEL', 'gpt-4o'),
 
-    # 通义千问配置
+    # 閫氫箟鍗冮棶閰嶇疆
     'QWEN_API_KEY': os.getenv('QWEN_API_KEY', ''),
     'QWEN_MODEL': os.getenv('QWEN_MODEL', 'qwen-max'),
 
-    # 通用参数
+    # 閫氱敤鍙傛暟
     'MAX_RETRIES': int(os.getenv('AI_MAX_RETRIES', '3')),
     'RETRY_BASE_DELAY': float(os.getenv('AI_RETRY_BASE_DELAY', '1.0')),
     'TIMEOUT': int(os.getenv('AI_TIMEOUT', '60')),
     'DEFAULT_MAX_TOKENS': int(os.getenv('AI_DEFAULT_MAX_TOKENS', '4096')),
+}
+
+# ============================================
+# 鎵ц寮曟搸閰嶇疆 (杞婚噺鍖栨墽琛屽紩鎿?
+# ============================================
+EXECUTION_RUNNER = {
+    # 鏈€澶у悓鏃舵墽琛岀殑鑴氭湰鏁帮紙鍗冲悓鏃跺惎鍔ㄧ殑 Playwright 娴忚鍣ㄥ疄渚嬫暟锛?
+    # 寤鸿鍊硷細鏈嶅姟鍣?4GB 鍐呭瓨 鈫?3锛?GB 鈫?5锛?6GB 鈫?8
+    # 鐜鍙橀噺 MAX_CONCURRENT_EXECUTIONS 鍙鐩栨鍊?
+    'max_workers': int(os.getenv('MAX_CONCURRENT_EXECUTIONS', '3')),
+}
+
+# ============================================
+# 瀛樺偍閰嶇疆 (V2.0 Trace 鎸佷箙鍖?
+# ============================================
+STORAGE_BACKEND = {
+    'TYPE': os.getenv('STORAGE_TYPE', 'local'),  # local | minio
+    'MINIO_ENDPOINT': os.getenv('MINIO_ENDPOINT', 'localhost:9000'),
+    'MINIO_ACCESS_KEY': os.getenv('MINIO_ACCESS_KEY', 'minioadmin'),
+    'MINIO_SECRET_KEY': os.getenv('MINIO_SECRET_KEY', 'minioadmin'),
+    'MINIO_BUCKET': os.getenv('MINIO_BUCKET', 'auto-test-traces'),
+    'MINIO_SECURE': os.getenv('MINIO_SECURE', 'false').lower() == 'true',
 }

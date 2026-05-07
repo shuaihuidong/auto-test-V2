@@ -130,8 +130,8 @@
 import { ref, reactive, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, LockFilled } from '@ant-design/icons-vue'
-import { variableApi } from '@/api/executor'
-import type { Variable } from '@/api/executor'
+import { variableApi } from '@/api/variable'
+import type { Variable } from '@/api/variable'
 
 interface Props {
   projectId: number
@@ -145,9 +145,10 @@ const variables = ref<Variable[]>([])
 const modalVisible = ref(false)
 const isEdit = ref(false)
 const form = reactive({
+  id: undefined as number | undefined,
   name: '',
   type: 'string',
-  value: '',
+  value: '' as any,
   json_value: '',
   description: '',
   is_sensitive: false
@@ -177,6 +178,7 @@ async function loadVariables() {
 function showCreateModal() {
   isEdit.value = false
   Object.assign(form, {
+    id: undefined,
     name: '',
     type: 'string',
     value: '',
@@ -225,8 +227,8 @@ async function handleSubmit() {
     const data = {
       name: form.name,
       value: value,
-      type: form.type,
-      scope: 'project',
+      type: form.type as 'string' | 'number' | 'boolean' | 'json',
+      scope: 'project' as const,
       project: props.projectId,
       description: form.description,
       is_sensitive: form.is_sensitive

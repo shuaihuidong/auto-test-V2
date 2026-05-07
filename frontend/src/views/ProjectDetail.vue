@@ -41,10 +41,6 @@
             <template #icon><ProfileOutlined /></template>
             计划管理
           </a-menu-item>
-          <a-menu-item key="executors">
-            <template #icon><CloudServerOutlined /></template>
-            执行机管理
-          </a-menu-item>
           <a-menu-item key="variables">
             <template #icon><DatabaseOutlined /></template>
             变量管理
@@ -82,11 +78,6 @@
         <!-- 计划管理 -->
         <div v-else-if="currentTab === 'plans'" class="tab-content">
           <PlanList :project-id="projectId" embed-mode />
-        </div>
-
-        <!-- 执行机管理 -->
-        <div v-else-if="currentTab === 'executors'" class="tab-content">
-          <ProjectExecutors :project-id="projectId" />
         </div>
 
         <!-- 变量管理 -->
@@ -129,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import dayjs from 'dayjs'
@@ -139,7 +130,6 @@ import {
   PlusOutlined,
   FileTextOutlined,
   ProfileOutlined,
-  CloudServerOutlined,
   DatabaseOutlined,
   TeamOutlined
 } from '@ant-design/icons-vue'
@@ -147,7 +137,6 @@ import { getProjectDetail, updateProject } from '@/api/project'
 import type { Project, ProjectForm } from '@/types/project'
 import ScriptList from '@/components/project/ScriptList.vue'
 import PlanList from '@/components/project/PlanList.vue'
-import ProjectExecutors from '@/components/project/ProjectExecutors.vue'
 import ProjectVariables from '@/components/project/ProjectVariables.vue'
 import ProjectMembers from '@/components/project/ProjectMembers.vue'
 

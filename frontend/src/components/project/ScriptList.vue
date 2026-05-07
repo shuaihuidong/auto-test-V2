@@ -19,9 +19,17 @@
           <a-select-option value="api">API测试</a-select-option>
         </a-select>
       </a-space>
-      <a-button v-if="!embedMode" type="primary" @click="goToCreate">
-        <PlusOutlined /> 新建脚本
-      </a-button>
+      <a-space>
+        <a-button @click="openNL2Script">
+          <ThunderboltOutlined /> AI 生成
+        </a-button>
+        <a-button @click="openBatchNL2Script">
+          <ThunderboltOutlined /> 批量生成
+        </a-button>
+        <a-button v-if="!embedMode" type="primary" @click="goToCreate">
+          <PlusOutlined /> 新建脚本
+        </a-button>
+      </a-space>
     </div>
 
     <a-table
@@ -84,10 +92,10 @@
       </template>
     </a-table>
 
-    <!-- 执行机选择对话框 -->
+    <!-- 运行确认对话框 -->
     <a-modal
       v-model:open="runModalVisible"
-      title="选择执行机"
+      title="确认运行"
       width="500px"
       @ok="handleRunConfirm"
       @cancel="runModalVisible = false"
@@ -96,43 +104,24 @@
         <a-form-item label="脚本">
           <a-input :value="selectedScript?.name" disabled />
         </a-form-item>
-        <a-form-item label="选择执行机">
-          <a-select
-            v-model:value="selectedExecutorId"
-            placeholder="留空则系统自动分配"
-            :loading="executorsLoading"
-            allow-clear
-            style="width: 100%"
-          >
-            <a-select-option
-              v-for="executor in availableExecutors"
-              :key="executor.id"
-              :value="executor.id"
-            >
-              <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <span>{{ executor.name }}</span>
-                <a-tag
-                  :color="executor.is_online ? 'success' : 'default'"
-                  size="small"
-                >
-                  {{ executor.is_online ? '在线' : '离线' }}
-                </a-tag>
-              </div>
-              <div style="font-size: 12px; color: #9CA3AF;">
-                {{ executor.platform }} | {{ executor.scope_display }}
-              </div>
-            </a-select-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item>
-          <template #extra>
-            <small style="color: #6B7280;">
-              如果不选择执行机，系统将自动分配给可用的执行机
-            </small>
-          </template>
-        </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- NL2Script AI 生成对话框 -->
+    <NL2ScriptDialog
+      ref="nl2scriptRef"
+      :projects="[{ id: projectId, name: projectName }]"
+      @saved="loadScripts"
+      @edit="goToEditById"
+    />
+
+    <!-- 批量 AI 生成对话框 -->
+    <NL2ScriptBatchDialog
+      ref="batchNL2ScriptRef"
+      :projects="[{ id: projectId, name: projectName }]"
+      @saved="loadScripts"
+      @goToTask="goToBatchTask"
+    />
   </div>
 </template>
 
@@ -146,13 +135,16 @@ import {
   MoreOutlined,
   CopyOutlined,
   ExportOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons-vue'
 import { scriptApi } from '@/api/script'
+import { getProject } from '@/api/project'
 import { executionApi } from '@/api/execution'
-import { executorApi } from '@/api/executor'
+
+import NL2ScriptDialog from '@/components/AI/NL2ScriptDialog.vue'
+import NL2ScriptBatchDialog from '@/components/AI/NL2ScriptBatchDialog.vue'
 import type { Script } from '@/types/script'
-import type { Executor } from '@/api/executor'
 
 interface Props {
   projectId: number
@@ -169,12 +161,32 @@ const scripts = ref<Script[]>([])
 const searchText = ref('')
 const filterType = ref('')
 
-// 执行机选择相关
+const projectId = props.projectId
+const projectName = ref('')
+
+// NL2Script
+const nl2scriptRef = ref()
+const batchNL2ScriptRef = ref()
+
+function openNL2Script() {
+  nl2scriptRef.value?.open()
+}
+
+function openBatchNL2Script() {
+  batchNL2ScriptRef.value?.open()
+}
+
+function goToBatchTask(taskId: number) {
+  router.push({ name: 'BatchTaskDetail', params: { id: String(taskId) } })
+}
+
+function goToEditById(scriptId: number) {
+  router.push(`/script/edit/${scriptId}?from=project-detail`)
+}
+
+// 运行确认相关
 const runModalVisible = ref(false)
 const selectedScript = ref<Script | null>(null)
-const selectedExecutorId = ref<number | undefined>(undefined)
-const availableExecutors = ref<Executor[]>([])
-const executorsLoading = ref(false)
 
 const columns = [
   { title: '脚本名称', key: 'name', width: 350, ellipsis: true },
@@ -222,23 +234,7 @@ function goToEdit(record: Script) {
 
 async function runScript(record: Script) {
   selectedScript.value = record
-  selectedExecutorId.value = undefined
   runModalVisible.value = true
-
-  // 加载可用执行机
-  await loadExecutors()
-}
-
-async function loadExecutors() {
-  executorsLoading.value = true
-  try {
-    const data = await executorApi.getAvailable({ project_id: props.projectId })
-    availableExecutors.value = data || []
-  } catch (error) {
-    availableExecutors.value = []
-  } finally {
-    executorsLoading.value = false
-  }
 }
 
 async function handleRunConfirm() {
@@ -246,8 +242,7 @@ async function handleRunConfirm() {
 
   try {
     await executionApi.create({
-      script_id: selectedScript.value.id,
-      executor_id: selectedExecutorId.value
+      script_id: selectedScript.value.id
     })
     message.success('执行任务已创建')
     runModalVisible.value = false
@@ -267,7 +262,7 @@ async function copyScript(record: Script) {
   }
 }
 
-function exportScript(record: Script) {
+function exportScript(_record: Script) {
   // TODO: 实现导出功能
   message.info('导出功能开发中')
 }
@@ -306,16 +301,6 @@ function getTypeColor(type: string): string {
   return colors[type] || 'default'
 }
 
-function getFrameworkLabel(framework: string): string {
-  const labels: Record<string, string> = {
-    selenium: 'Selenium',
-    playwright: 'Playwright',
-    appium: 'Appium',
-    httprunner: 'HttpRunner'
-  }
-  return labels[framework] || framework
-}
-
 function formatTime(time: string): string {
   const date = new Date(time)
   const now = new Date()
@@ -329,7 +314,17 @@ function formatTime(time: string): string {
 
 onMounted(() => {
   loadScripts()
+  loadProjectName()
 })
+
+async function loadProjectName() {
+  try {
+    const project = await getProject(projectId)
+    projectName.value = project.name
+  } catch (error) {
+    // ignore
+  }
+}
 
 // 暴露刷新方法给父组件
 defineExpose({

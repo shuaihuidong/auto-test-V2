@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Script, DataSource, ApiTestConfig
+from .models import Script, DataSource, ApiTestConfig, BatchTask
 
 
 class DataSourceSerializer(serializers.ModelSerializer):
@@ -83,3 +83,15 @@ class ApiTestConfigSerializer(serializers.ModelSerializer):
                   'sign_enabled', 'sign_algorithm', 'sign_key', 'sign_position', 'sign_field',
                   'mock_enabled', 'mock_response', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class BatchTaskSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True)
+
+    class Meta:
+        model = BatchTask
+        fields = ['id', 'name', 'status', 'total_count', 'completed_count', 'failed_count',
+                  'results', 'error_message', 'created_by', 'created_by_name',
+                  'created_at', 'updated_at']
+        read_only_fields = ['id', 'status', 'total_count', 'completed_count', 'failed_count',
+                            'results', 'error_message', 'created_by', 'created_at', 'updated_at']

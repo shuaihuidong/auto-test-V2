@@ -45,7 +45,6 @@ import { computed } from 'vue'
 import { HolderOutlined, CopyOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import SimpleButton from './SimpleButton.vue'
 import type { TestStep } from '@/types/script-editor'
-import type { Component } from 'vue'
 
 interface Props {
   step: TestStep

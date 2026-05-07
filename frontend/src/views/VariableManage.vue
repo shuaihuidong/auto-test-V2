@@ -240,21 +240,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, LockFilled } from '@ant-design/icons-vue'
-import { variableApi } from '@/api/executor'
+import { variableApi } from '@/api/variable'
 import { projectApi } from '@/api/project'
 import { getScriptList } from '@/api/script'
-import type { Variable } from '@/api/executor'
+import type { Variable } from '@/api/variable'
 
 interface FormState {
   id?: number
-  scope: string
+  scope: 'global' | 'project' | 'script'
   project: number | null
   script: number | null
   name: string
-  type: string
+  type: 'string' | 'number' | 'boolean' | 'json'
   value: any
   json_value: string
   description: string
@@ -524,10 +524,6 @@ async function deleteVariable(id: number) {
   } catch (error) {
     // 错误已由拦截器处理
   }
-}
-
-function handleTableChange() {
-  // 处理分页变化
 }
 
 onMounted(() => {

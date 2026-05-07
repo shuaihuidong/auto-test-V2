@@ -84,13 +84,13 @@
         <!-- Locator input -->
         <div v-if="schema.type === 'locator'" class="property-form__locator">
           <SimpleSelect
-            v-model="localStep.params.locator.type"
+            v-model="localStep.params.locator!.type"
             :options="locatorTypeOptions"
             placeholder="定位器类型"
             size="small"
           />
           <SimpleInput
-            v-model="localStep.params.locator.value"
+            v-model="localStep.params.locator!.value"
             placeholder="定位器值"
           >
             <template #suffix>
@@ -136,12 +136,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { DatabaseOutlined } from '@ant-design/icons-vue'
 import SimpleInput from './SimpleInput.vue'
 import SimpleSelect from './SimpleSelect.vue'
 import SimpleCheckbox from './SimpleCheckbox.vue'
-import type { TestStep, ParamSchema, LocatorType } from '@/types/script-editor'
+import type { TestStep, ParamSchema } from '@/types/script-editor'
 
 interface Props {
   step: TestStep
@@ -167,16 +167,16 @@ const advancedJson = ref('')
 const fieldErrors = ref<Record<string, string>>({})
 const isUpdatingFromProps = ref(false)
 
-// Locator type options
+// Locator type options — Playwright locator strategies
 const locatorTypeOptions = [
-  { label: 'XPath', value: 'xpath' },
   { label: 'CSS Selector', value: 'css' },
+  { label: 'XPath', value: 'xpath' },
   { label: 'ID', value: 'id' },
-  { label: 'Name', value: 'name' },
-  { label: 'Class', value: 'class' },
-  { label: 'Tag', value: 'tag' },
-  { label: 'Link Text', value: 'link_text' },
-  { label: 'Partial Link Text', value: 'partial_link_text' }
+  { label: '文本内容', value: 'text' },
+  { label: '关联标签', value: 'label' },
+  { label: '占位文本', value: 'placeholder' },
+  { label: 'ARIA角色', value: 'role' },
+  { label: '测试ID (data-testid)', value: 'test_id' },
 ]
 
 // Watch for step changes

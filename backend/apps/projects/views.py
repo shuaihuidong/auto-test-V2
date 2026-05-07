@@ -213,5 +213,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
             )
 
         # 删除项目（会级联删除相关数据）
+        # 清理 executors_taskqueue 中的孤立记录（无对应 Django Model，CASCADE 不会自动清理）
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'DELETE FROM executors_taskqueue WHERE execution_id IN '
+                '(SELECT ee.id FROM executions_execution ee '
+                'INNER JOIN scripts_script ss ON ee.script_id = ss.id '
+                'WHERE ss.project_id = %s)',
+                [project.id]
+            )
+
         project.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

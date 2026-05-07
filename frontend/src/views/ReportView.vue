@@ -116,12 +116,17 @@
                   {{ getStatusText(record.status) }}
                 </a-tag>
               </template>
-              <template v-else-if="column.key === 'error_reason'">
-                <span v-if="record.error_reason" class="error-text">{{ record.error_reason }}</span>
-                <span v-else>-</span>
-              </template>
+            <template v-else-if="column.key === 'error_reason'">
+              <span v-if="record.error_reason" class="error-text">{{ record.error_reason }}</span>
+              <span v-else>-</span>
             </template>
-          </a-table>
+            <template v-else-if="column.key === 'detail'">
+              <a-button type="link" size="small" @click="openExecutionDetail(record)">
+                详情
+              </a-button>
+            </template>
+          </template>
+        </a-table>
         </a-card>
       </div>
 
@@ -220,12 +225,19 @@
                   <div class="no-failure-text">全部通过</div>
                   <div class="no-failure-sub">所有步骤执行成功</div>
                 </div>
+
+                <!-- AI 智能分析按钮 -->
+                <div v-if="steps.some(s => !s.success)" class="ai-analysis-trigger">
+                  <a-button type="primary" ghost @click="showAIModal = true">
+                    <ThunderboltOutlined /> AI 智能分析
+                  </a-button>
+                </div>
               </div>
             </a-card>
           </a-col>
         </a-row>
 
-        <!-- 步骤详情 -->
+        <!-- 步骤详情 - Playwright 风格时间线 -->
         <a-card title="步骤详情" class="steps-section">
           <template v-if="getRemainingStepsCount() > 0" #extra>
             <a-tag color="warning" style="margin-right: 8px;">
@@ -233,45 +245,106 @@
               脚本中途失败，还有 {{ getRemainingStepsCount() }} 个步骤未执行
             </a-tag>
           </template>
-          <a-table
-            :columns="stepColumns"
-            :data-source="steps"
-            :pagination="{ pageSize: 20 }"
-            row-key="index"
-            size="small"
-          >
-            <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'success'">
-                <a-tag :color="record.success ? 'success' : 'error'">
-                  {{ record.success ? '通过' : '失败' }}
-                </a-tag>
-              </template>
-              <template v-else-if="column.key === 'duration'">
-                {{ record.duration }}ms
-              </template>
-              <template v-else-if="column.key === 'error'">
-                <span v-if="record.error" class="error-text">{{ record.error }}</span>
-                <span v-else>-</span>
-              </template>
-            </template>
-          </a-table>
+
+          <div class="step-timeline">
+            <div
+              v-for="step in steps"
+              :key="step.index"
+              class="step-row"
+              :class="{
+                'step-passed': step.success,
+                'step-failed': !step.success,
+              }"
+            >
+              <!-- 左侧：状态指示器 -->
+              <div class="step-indicator">
+                <CheckCircleFilled v-if="step.success" class="icon-pass" />
+                <CloseCircleFilled v-else class="icon-fail" />
+              </div>
+
+              <!-- 中间：步骤内容 -->
+              <div class="step-content">
+                <!-- 步骤头部 -->
+                <div class="step-header">
+                  <span class="step-index">#{{ step.index }}</span>
+                  <span class="step-name">{{ step.name }}</span>
+                  <a-tag v-if="step.type" size="small" class="step-type-tag">{{ step.type }}</a-tag>
+                  <span class="step-duration" :class="{ 'duration-slow': step.duration > 3000 }">
+                    {{ formatDuration(step.duration) }}
+                  </span>
+                </div>
+
+                <!-- 消息 -->
+                <div v-if="step.message && step.message !== '执行成功'" class="step-message">
+                  {{ step.message }}
+                </div>
+
+                <!-- 错误信息 -->
+                <div v-if="step.error" class="step-error">
+                  <ExclamationCircleOutlined /> {{ step.error }}
+                </div>
+
+                <!-- 截图 -->
+                <div v-if="step.screenshot" class="step-screenshot">
+                  <a-image
+                    :src="step.screenshot"
+                    :width="200"
+                    :preview="{ src: step.screenshot }"
+                    class="screenshot-thumb"
+                  />
+                </div>
+              </div>
+
+              <!-- 右侧：耗时条 -->
+              <div class="step-duration-bar">
+                <div
+                  class="duration-fill"
+                  :class="{
+                    'fill-pass': step.success,
+                    'fill-fail': !step.success,
+                  }"
+                  :style="{ width: getDurationPercent(step.duration) + '%' }"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- 汇总统计 -->
+          <div class="step-summary">
+            <a-space :size="24">
+              <span>
+                <CheckCircleFilled style="color: #52c41a; margin-right: 4px;" />
+                {{ steps.filter(s => s.success).length }} 通过
+              </span>
+              <span v-if="steps.some(s => !s.success)">
+                <CloseCircleFilled style="color: #ff4d4f; margin-right: 4px;" />
+                {{ steps.filter(s => !s.success).length }} 失败
+              </span>
+              <span style="color: #999;">
+                总耗时 {{ formatDuration(steps.reduce((a, s) => a + s.duration, 0)) }}
+              </span>
+            </a-space>
+          </div>
         </a-card>
       </div>
 
       <a-empty v-else description="暂无报告数据" />
-
-      <!-- 自愈日志面板 -->
-      <a-card v-if="executionId" title="智能自愈记录" style="margin-top: 16px;">
-        <HealLogPanel :execution-id="executionId" @applied="refreshReport" />
-      </a-card>
     </a-spin>
+
+    <!-- AI 智能分析弹窗 -->
+    <AIAnalysisModal
+      v-model:visible="showAIModal"
+      :execution-id="executionId"
+      :script-id="report?.summary?.script_id || 0"
+      @applied="handleAIApplied"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { message, Result as AResult } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
 import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
 import {
@@ -279,13 +352,17 @@ import {
   ReloadOutlined,
   DownloadOutlined,
   CheckCircleOutlined,
+  CheckCircleFilled,
+  CloseCircleFilled,
+  ExclamationCircleOutlined,
   BulbOutlined,
   ExperimentOutlined,
-  WarningOutlined
+  WarningOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons-vue'
 import { getReport, downloadHtmlReport, generateReport } from '@/api/report'
 import type { Report } from '@/api/report'
-import HealLogPanel from '@/components/AI/HealLogPanel.vue'
+import AIAnalysisModal from '@/components/AI/AIAnalysisModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -312,27 +389,19 @@ const isPlanReport = computed(() => {
 const pageTitle = computed(() => isPlanReport.value ? '测试计划报告' : '测试报告')
 
 // 脚本执行报告的步骤列
-const stepColumns = [
-  { title: '序号', key: 'index', dataIndex: 'index', width: 80 },
-  { title: '步骤名称', key: 'name', dataIndex: 'name', width: 200 },
-  { title: '类型', key: 'type', dataIndex: 'type', width: 120 },
-  { title: '状态', key: 'success', width: 100 },
-  { title: '耗时', key: 'duration', width: 100 },
-  { title: '信息', key: 'message', dataIndex: 'message' },
-  { title: '错误', key: 'error', width: 300 }
-]
-
 // 计划报告的脚本列
 const scriptColumns = [
   { title: 'ID', key: 'id', dataIndex: 'id', width: 80 },
   { title: '脚本名称', key: 'name', dataIndex: 'name', width: 300 },
   { title: '状态', key: 'status', width: 100 },
   { title: '耗时(秒)', key: 'duration', dataIndex: 'duration', width: 100 },
-  { title: '失败原因', key: 'error_reason', width: 300 }
+  { title: '失败原因', key: 'error_reason', width: 300 },
+  { title: '详情', key: 'detail', width: 100 }
 ]
 
 const steps = ref<any[]>([])
 const scripts = ref<any[]>([])
+const showAIModal = ref(false)
 
 async function loadReport() {
   loading.value = true
@@ -350,28 +419,29 @@ async function loadReport() {
 
       // 调试日志
       console.log('报告数据:', report.value)
-      console.log('execution_type:', report.value.execution_type)
-      console.log('summary.execution_type:', report.value.summary?.execution_type)
-      console.log('charts_data:', report.value.charts_data)
+      console.log('execution_type:', report.value!.execution_type)
+      console.log('summary.execution_type:', report.value!.summary?.execution_type)
+      console.log('charts_data:', report.value!.charts_data)
 
       // 如果是计划报告，处理脚本数据
-      if (isPlanReport.value && report.value.charts_data?.scripts) {
-        scripts.value = report.value.charts_data.scripts.map((script: any) => ({
+      if (isPlanReport.value && report.value!.charts_data?.scripts) {
+        scripts.value = report.value!.charts_data.scripts.map((script: any) => ({
           ...script,
           error_reason: script.error_reason || (script.status === 'failed' ? '执行失败' : '')
         }))
         console.log('脚本数据:', scripts.value)
       } else {
         // 脚本报告，处理步骤数据
-        if (report.value.charts_data?.trend) {
-          steps.value = report.value.charts_data.trend.map((item: any, index: number) => ({
+        if (report.value!.charts_data?.trend) {
+          steps.value = report.value!.charts_data.trend.map((item: any, index: number) => ({
             index: index + 1,
             name: item.name || `步骤${index + 1}`,
             type: item.type || 'unknown',
             success: item.success,
             duration: item.duration || 0,
             message: item.message || (item.success ? '执行成功' : '执行失败'),
-            error: item.success ? '' : (item.error || item.message || '执行失败')
+            error: item.success ? '' : (item.error || item.message || '执行失败'),
+            screenshot: item.screenshot || '',
           }))
         }
         console.log('步骤数据:', steps.value)
@@ -410,12 +480,32 @@ async function downloadReport() {
 }
 
 function goBack() {
-  // 根据报告类型返回到对应的 tab
+  const returnTo = route.query.returnTo
+  if (typeof returnTo === 'string' && returnTo) {
+    window.location.assign(returnTo)
+    return
+  }
+
+  // Fallback: return to the executions page that opened this report.
   if (isPlanReport.value) {
     router.push({ path: '/executions', query: { tab: 'plan' } })
   } else {
     router.push({ path: '/executions', query: { tab: 'script' } })
   }
+}
+
+function handleAIApplied(scriptId: number) {
+  router.push({ name: 'ScriptEdit', params: { id: scriptId } })
+}
+
+function openExecutionDetail(record: any) {
+  const detailExecutionId = record.execution_id || record.id
+  const target = router.resolve({
+    name: 'ReportView',
+    params: { executionId: String(detailExecutionId) },
+    query: { returnTo: route.fullPath },
+  })
+  window.location.assign(target.href)
 }
 
 function renderCharts() {
@@ -436,7 +526,7 @@ function renderCharts() {
       }
 
       // 只显示有数据的状态
-      const filteredData = report.value.charts_data.status_distribution
+      const filteredData = (report.value.charts_data.status_distribution || [])
         .filter((item: any) => item.count > 0)
         .map((item: any) => ({
           name: item.status === 'running' ? '执行中' :
@@ -495,23 +585,23 @@ function renderCharts() {
         trigger: 'axis',
         formatter: (params: any) => {
           const param = params[0]
-          const item = report.value.charts_data.trend[param.dataIndex]
-          return `${param.name}<br/>耗时: ${item.duration}ms<br/>状态: ${item.success ? '成功' : '失败'}`
+          const item = report.value!.charts_data.trend?.[param.dataIndex]
+          return `${param.name}<br/>耗时: ${item?.duration}ms<br/>状态: ${item?.success ? '成功' : '失败'}`
         }
       },
       xAxis: {
         type: 'category',
-        data: report.value.charts_data.trend.map((item: any) => `步骤${item.index}`),
+        data: report.value!.charts_data.trend?.map((item: any) => `步骤${item.index}`) || [],
         axisLabel: { rotate: 45 }
       },
       yAxis: { type: 'value', name: '耗时(ms)' },
       series: [{
         type: 'line',
         smooth: true,
-        data: report.value.charts_data.trend.map((item: any) => ({
+        data: report.value!.charts_data.trend?.map((item: any) => ({
           value: item.duration,
           itemStyle: { color: item.success ? '#52c41a' : '#f5222d' }
-        })),
+        })) || [],
         areaStyle: {
           color: {
             type: 'linear',
@@ -919,6 +1009,18 @@ function getRemainingStepsCount() {
   return 0
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function getDurationPercent(ms: number): number {
+  if (!steps.value.length) return 0
+  const maxDuration = Math.max(...steps.value.map(s => s.duration), 1)
+  return Math.max(Math.round((ms / maxDuration) * 100), 2)
+}
+
+
 onMounted(() => {
   loadReport()
 })
@@ -959,8 +1061,147 @@ onMounted(() => {
   margin-top: 16px;
 }
 
-.error-text {
-  color: #f5222d;
+/* Step timeline - Playwright style */
+.step-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.step-row {
+  display: flex;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 6px;
+  transition: background 0.2s;
+  position: relative;
+}
+
+.step-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.step-passed {
+  border-left: 3px solid #52c41a;
+}
+
+.step-failed {
+  border-left: 3px solid #ff4d4f;
+  background: rgba(255, 77, 79, 0.04);
+}
+
+.step-indicator {
+  width: 20px;
+  flex-shrink: 0;
+  margin-right: 10px;
+  margin-top: 2px;
+}
+
+.icon-pass {
+  color: #52c41a;
+  font-size: 16px;
+}
+
+.icon-fail {
+  color: #ff4d4f;
+  font-size: 16px;
+}
+
+.step-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.step-index {
+  color: #999;
+  font-size: 12px;
+  font-family: monospace;
+}
+
+.step-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.step-type-tag {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.step-duration {
+  font-family: monospace;
+  font-size: 12px;
+  color: #999;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.duration-slow {
+  color: #fa8c16;
+}
+
+.step-message {
+  font-size: 12px;
+  color: #aaa;
+  margin-top: 4px;
+  padding-left: 4px;
+}
+
+.step-error {
+  font-size: 12px;
+  color: #ff7875;
+  margin-top: 4px;
+  padding: 4px 8px;
+  background: rgba(255, 77, 79, 0.08);
+  border-radius: 4px;
+}
+
+.step-screenshot {
+  margin-top: 6px;
+}
+
+.screenshot-thumb {
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.step-duration-bar {
+  width: 80px;
+  flex-shrink: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  margin-top: 8px;
+  margin-left: 12px;
+}
+
+.duration-fill {
+  height: 100%;
+  border-radius: 2px;
+  min-width: 2px;
+  transition: width 0.3s;
+}
+
+.fill-pass {
+  background: #52c41a;
+}
+
+.fill-fail {
+  background: #ff4d4f;
+}
+
+.step-summary {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
 }
 
 .failure-analysis {
@@ -1190,5 +1431,13 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* AI 智能分析按钮 */
+.ai-analysis-trigger {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  text-align: center;
 }
 </style>

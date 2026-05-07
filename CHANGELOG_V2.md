@@ -284,11 +284,11 @@ data-testid → [data-testid=...]
 
 ### 已知待办 / 潜在风险点
 
-1. **数据库**: 当前使用 SQLite，生产环境建议切换 PostgreSQL
-2. **Secrets 管理**: K8s Secrets 和 docker-compose .env 中的密钥为明文，生产应使用 Vault/External Secrets
+1. **数据库**: ~~当前使用 SQLite，生产环境建议切换 PostgreSQL~~ **已解决** — `settings.py` 支持 `DB_ENGINE` 环境变量动态切换 PostgreSQL/MySQL/SQLite
+2. **Secrets 管理**: ~~K8s Secrets 和 docker-compose .env 中的密钥为明文~~ **已解决** — 添加 `generate_secrets.sh` 脚本，所有敏感配置通过环境变量管理
 3. **AI 服务未配置时不影响平台运行**，NL2Script/Self-healing API 返回 503 + 友好提示（已修复）
-4. **executor-client/ (PyQt6)** 未删除，仍可与 V2.0 并存消费 MQ 任务
-5. **Playwright Trace 文件** 存储在 emptyDir (K8s) 或 Docker volume 中，Pod 重启后丢失，需对接对象存储
+4. **executor-client/ (PyQt6)** ~~未删除，仍可与 V2.0 并存消费 MQ 任务~~ **已解决** — 已删除目录，更新相关文档
+5. **Playwright Trace 文件** ~~存储在 emptyDir (K8s) 或 Docker volume 中，Pod 重启后丢失~~ **已解决** — 添加 MinIO 可选存储后端
 
 ---
 
@@ -316,3 +316,7 @@ data-testid → [data-testid=...]
 | 2026-04-22 | 测试 | tests-e2e/ | UI E2E 测试对齐: 安装 pytest-playwright + Chromium, 配置 base_url, 修复 POM selector |
 | 2026-04-22 | 测试 | tests-e2e/ | 全套 E2E 测试最终结果: 37 passed, 3 skipped, 0 failed |
 | 2026-04-22 | 测试 | tests-e2e/ | POM 对齐前端 DOM: 40 passed, 0 failed, 0 skipped (API + UI 全覆盖) |
+| 2026-04-22 | 基础设施 | settings.py, docker-compose.yml | PostgreSQL/MySQL 多引擎数据库支持 (DB_ENGINE 环境变量) |
+| 2026-04-22 | 安全 | scripts/generate_secrets.sh, docker-compose.yml | Secrets 管理: 密钥生成脚本, 消除明文密码 |
+| 2026-04-22 | 存储 | services/storage.py, docker-compose.yml | MinIO 对象存储后端 (Playwright Trace 持久化) |
+| 2026-04-22 | 清理 | executor-client/ (删除) | 移除 V1.x PyQt6 桌面客户端, 更新文档引用 |

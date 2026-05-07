@@ -1,4 +1,4 @@
-import { get, post } from './request'
+import { get, post, request } from './request'
 import type { Execution, ExecutionCreateForm } from '@/types/execution'
 
 export async function getExecutionList(params?: any): Promise<{ results: Execution[]; count: number }> {
@@ -62,6 +62,40 @@ export async function applyHeal(healLogId: number): Promise<{
   return post('/executions/heal_apply/', { heal_log_id: healLogId })
 }
 
+/** 批量分析失败步骤（AI 智能分析） */
+export function batchHealExecution(executionId: number): Promise<{
+  execution_id: number
+  script_id: number
+  analysis_results: Array<{
+    heal_log_id: number
+    step_index: number
+    step_name: string
+    heal_status: string
+    original_locator: string
+    suggested_locator: string
+    suggested_locator_platform: { type: string; value: string } | null
+    confidence: number
+    reason: string
+  }>
+  analyzed_count: number
+  total_tokens: number
+}> {
+  return request({
+    url: `/executions/${executionId}/batch_heal/`,
+    method: 'POST',
+    timeout: 300000,
+  })
+}
+
+/** 批量应用修复建议 */
+export function batchApplyHeal(healLogIds: number[]): Promise<{
+  message: string
+  script_id: number
+  applied_count: number
+}> {
+  return post('/executions/heal_batch_apply/', { heal_log_ids: healLogIds })
+}
+
 // 导出 API 对象供组件使用
 export const executionApi = {
   getList: getExecutionList,
@@ -73,4 +107,6 @@ export const executionApi = {
   heal: healExecution,
   getHealLogs,
   applyHeal,
+  batchHeal: batchHealExecution,
+  batchApplyHeal,
 }

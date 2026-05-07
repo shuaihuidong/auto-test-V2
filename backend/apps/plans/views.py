@@ -1,12 +1,14 @@
-from rest_framework import viewsets, filters, status
+from rest_framework import viewsets, filters, status, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
+from django.db import transaction
 from .models import Plan
 from .serializers import PlanSerializer
 from apps.users.permissions import IsPlanOwnerOrAdmin
+from apps.scheduler.services import sync_plan_schedule
 
 
 class PlanViewSet(viewsets.ModelViewSet):
@@ -41,7 +43,20 @@ class PlanViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """创建计划时自动设置创建者"""
-        serializer.save(created_by=self.request.user)
+        with transaction.atomic():
+            plan = serializer.save(created_by=self.request.user)
+            try:
+                sync_plan_schedule(plan)
+            except ValueError as exc:
+                raise serializers.ValidationError({'cron_expression': str(exc)})
+
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            plan = serializer.save()
+            try:
+                sync_plan_schedule(plan)
+            except ValueError as exc:
+                raise serializers.ValidationError({'cron_expression': str(exc)})
 
     def create(self, request, *args, **kwargs):
         """创建计划 - 权限检查"""

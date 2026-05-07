@@ -1,7 +1,33 @@
-version: '3.8'
+﻿version: '3.8'
 
 services:
-  # Redis 缓存和Channel层
+  # ============================================
+  # PostgreSQL 鏁版嵁搴?(鍙€? DB_ENGINE=postgresql 鏃跺惎鐢?
+  # 榛樿浣跨敤 SQLite, 閫氳繃 DB_ENGINE 鐜鍙橀噺鍒囨崲
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: auto-test-postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-auto_test_platform}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - auto-test-network
+    profiles:
+      - postgres
+
+  # Redis 缂撳瓨鍜孋hannel灞?
   redis:
     image: redis:7-alpine
     container_name: auto-test-redis
@@ -19,16 +45,16 @@ services:
     networks:
       - auto-test-network
 
-  # RabbitMQ 消息队列
+  # RabbitMQ 娑堟伅闃熷垪
   rabbitmq:
     image: rabbitmq:3.12-management
     container_name: auto-test-rabbitmq
     ports:
-      - "0.0.0.0:5672:5672"
+      - "127.0.0.1:5672:5672"
       - "127.0.0.1:15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -rabbit loopback_users [] -rabbit heartbeat 60 -rabbit tcp_listeners [{"0.0.0.0",5672}]
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
@@ -41,7 +67,34 @@ services:
     networks:
       - auto-test-network
 
-  # Django 后端
+  # ============================================
+  # MinIO 瀵硅薄瀛樺偍 (鍙€? STORAGE_TYPE=minio 鏃跺惎鐢?
+  # 鐢ㄤ簬鎸佷箙鍖?Playwright Trace 鏂囦欢
+  # ============================================
+  minio:
+    image: minio/minio
+    container_name: auto-test-minio
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - auto-test-network
+    profiles:
+      - minio
+
+  # Django 鍚庣
   backend:
     build:
       context: ./backend
@@ -50,19 +103,34 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-core.settings_prod}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
       DEBUG: ${DEBUG:-False}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost,http://localhost:80,https://localhost,https://43.136.56.242}
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: ${REDIS_PORT:-6379}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      RABBITMQ_USER: guest
-      RABBITMQ_PASSWORD: guest
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
       RABBITMQ_PUBLIC_HOST: ${RABBITMQ_PUBLIC_HOST:-43.136.56.242}
       RABBITMQ_VHOST: /
       RABBITMQ_ENCRYPTION_KEY: ${RABBITMQ_ENCRYPTION_KEY}
+      # 鏁版嵁搴撻厤缃?
+      DB_ENGINE: ${DB_ENGINE:-sqlite3}
+      DB_NAME: ${DB_NAME:-auto_test_platform}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      # 瀵硅薄瀛樺偍閰嶇疆 (MinIO)
+      STORAGE_TYPE: ${STORAGE_TYPE:-local}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-auto-test-traces}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
       PORT: 8000
       SECURE_SSL_REDIRECT: "False"
     volumes:
@@ -84,21 +152,72 @@ services:
       retries: 3
       start_period: 40s
 
+  # 定时调度器
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: auto-test-scheduler
+    command: python manage.py run_scheduler --interval 30
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-core.settings_prod}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DEBUG: ${DEBUG:-False}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost,http://localhost:80,https://localhost,https://43.136.56.242}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_PUBLIC_HOST: ${RABBITMQ_PUBLIC_HOST:-43.136.56.242}
+      RABBITMQ_VHOST: /
+      RABBITMQ_ENCRYPTION_KEY: ${RABBITMQ_ENCRYPTION_KEY}
+      DB_ENGINE: ${DB_ENGINE:-sqlite3}
+      DB_NAME: ${DB_NAME:-auto_test_platform}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      STORAGE_TYPE: ${STORAGE_TYPE:-local}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-auto-test-traces}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      SECURE_SSL_REDIRECT: "False"
+    volumes:
+      - backend_static:/app/staticfiles
+      - backend_media:/app/media
+      - backend_reports:/app/reports
+      - backend_db:/app/db
+      - backend_sessions:/app/sessions
+    depends_on:
+      backend:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - auto-test-network
+
+
   # ============================================
-  # Playwright 容器化执行器（生产）
-  # 支持 scale 水平扩展：docker-compose up --scale executor=3
+  # Playwright 瀹瑰櫒鍖栨墽琛屽櫒锛堢敓浜э級
+  # 鏀寔 scale 姘村钩鎵╁睍锛歞ocker-compose up --scale executor=3
   # ============================================
   executor:
     build:
       context: ./executor-docker
       dockerfile: Dockerfile
-    # 不固定 container_name，允许 scale 多实例
+    # 涓嶅浐瀹?container_name锛屽厑璁?scale 澶氬疄渚?
     environment:
       BACKEND_URL: http://backend:8000
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      RABBITMQ_USER: guest
-      RABBITMQ_PASSWORD: guest
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
       EXECUTOR_NAME: ${EXECUTOR_NAME:-docker-executor}
       OWNER_USERNAME: ${OWNER_USERNAME:-}
       MAX_CONCURRENT: ${EXECUTOR_MAX_CONCURRENT:-2}
@@ -127,8 +246,8 @@ services:
       - auto-test-network
 
   # ============================================
-  # Playwright 调试执行器（noVNC 可视化）
-  # 访问 http://localhost:6080 观察浏览器操作
+  # Playwright 璋冭瘯鎵ц鍣紙noVNC 鍙鍖栵級
+  # 璁块棶 http://localhost:6080 瑙傚療娴忚鍣ㄦ搷浣?
   # ============================================
   executor-debug:
     build:
@@ -141,8 +260,8 @@ services:
       BACKEND_URL: http://backend:8000
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      RABBITMQ_USER: guest
-      RABBITMQ_PASSWORD: guest
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
       EXECUTOR_NAME: ${EXECUTOR_DEBUG_NAME:-debug-executor}
       OWNER_USERNAME: ${OWNER_USERNAME:-}
       MAX_CONCURRENT: 1
@@ -167,7 +286,7 @@ services:
     networks:
       - auto-test-network
 
-  # Vue 前端 (HTTPS自动构建)
+  # Vue 鍓嶇 (HTTPS鑷姩鏋勫缓)
   frontend:
     build:
       context: ./frontend
@@ -191,6 +310,10 @@ volumes:
   redis_data:
     driver: local
   rabbitmq_data:
+    driver: local
+  postgres_data:
+    driver: local
+  minio_data:
     driver: local
   backend_static:
     driver: local

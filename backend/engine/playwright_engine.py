@@ -21,7 +21,7 @@ class PlaywrightEngine(TestEngine):
         self.browser_type = self.config.get('browser', 'chromium')
         self.headless = self.config.get('headless', False)
         self.timeout = self.config.get('timeout', 10000)  # Playwright uses milliseconds
-        self.screenshot_dir = settings.SCREENSHOTS_ROOT
+        self.screenshot_dir = self.config.get('screenshot_dir', settings.SCREENSHOTS_ROOT)
         self.playwright = None
         self.browser = None
         self.context = None
@@ -62,34 +62,74 @@ class PlaywrightEngine(TestEngine):
         params = step.get('params', {})
 
         try:
-            if step_type == 'goto':
+            # 步骤类型别名映射（AI 生成的脚本可能使用不同的命名）
+            _TYPE_ALIASES = {
+                'wait_element': 'wait',
+                'wait_for_element': 'wait',
+                'assert_element': 'assert',
+                'assert_text': 'assert',
+                'assert_title': 'assert',
+                'type': 'input',
+                'navigate': 'goto',
+                'open': 'goto',
+                'js': 'execute_script',
+                'run_script': 'execute_script',
+                'take_screenshot': 'screenshot',
+            }
+            resolved_type = _TYPE_ALIASES.get(step_type, step_type)
+
+            if resolved_type == 'goto':
                 result = self._goto(params)
-            elif step_type == 'click':
+            elif resolved_type == 'click':
                 result = self._click(params)
-            elif step_type == 'input':
+            elif resolved_type == 'input':
                 result = self._input(params)
-            elif step_type == 'assert':
+            elif resolved_type == 'assert':
                 result = self._assert(params)
-            elif step_type == 'wait':
+            elif resolved_type == 'wait':
                 result = self._wait(params)
-            elif step_type == 'scroll':
+            elif resolved_type == 'scroll':
                 result = self._scroll(params)
-            elif step_type == 'switch':
+            elif resolved_type == 'switch':
                 result = self._switch(params)
-            elif step_type == 'execute_script':
+            elif resolved_type == 'execute_script':
                 result = self._execute_script(params)
-            elif step_type == 'screenshot':
+            elif resolved_type == 'screenshot':
                 result = self._screenshot(params)
-            elif step_type == 'hover':
+            elif resolved_type == 'hover':
                 result = self._hover(params)
-            elif step_type == 'select':
+            elif resolved_type == 'select':
                 result = self._select(params)
-            elif step_type == 'upload':
+            elif resolved_type == 'checkbox':
+                result = self._checkbox(params)
+            elif resolved_type == 'clear':
+                result = self._clear(params)
+            elif resolved_type == 'upload':
                 result = self._upload(params)
-            elif step_type == 'set_variable':
+            elif resolved_type == 'set_variable':
                 result = self._set_variable(params)
-            elif step_type == 'extract_variable':
+            elif resolved_type == 'extract_variable':
                 result = self._extract_variable(params)
+            elif resolved_type == 'refresh':
+                result = self._refresh(params)
+            elif resolved_type == 'back':
+                result = self._back(params)
+            elif resolved_type == 'forward':
+                result = self._forward(params)
+            elif resolved_type == 'double_click':
+                result = self._double_click(params)
+            elif resolved_type == 'right_click':
+                result = self._right_click(params)
+            elif resolved_type == 'press_key':
+                result = self._press_key(params)
+            elif resolved_type == 'new_tab':
+                result = self._new_tab(params)
+            elif resolved_type == 'close_tab':
+                result = self._close_tab(params)
+            elif resolved_type == 'set_cookie':
+                result = self._set_cookie(params)
+            elif resolved_type == 'download':
+                result = self._download(params)
             else:
                 result = {
                     'success': False,
@@ -104,14 +144,30 @@ class PlaywrightEngine(TestEngine):
                 if screenshot_path:
                     result['screenshot'] = screenshot_path
 
+                # 捕获页面元素摘要供 AI 分析
+                try:
+                    result['dom_snapshot'] = self._extract_page_elements()
+                except Exception:
+                    pass
+
             return result
 
         except Exception as e:
-            return {
+            # 捕获页面元素摘要供 AI 分析
+            dom_snapshot = ''
+            try:
+                dom_snapshot = self._extract_page_elements()
+            except Exception:
+                pass
+
+            result = {
                 'success': False,
                 'error': f'步骤执行异常: {str(e)}',
                 'duration': round((time.time() - start_time) * 1000, 2)
             }
+            if dom_snapshot:
+                result['dom_snapshot'] = dom_snapshot
+            return result
 
     def teardown(self) -> None:
         """清理Playwright资源"""
@@ -134,7 +190,7 @@ class PlaywrightEngine(TestEngine):
 
     def _find_element(self, locator: Dict[str, Any]):
         """查找页面元素"""
-        locator_type = locator.get('type', 'xpath')
+        locator_type = locator.get('type', 'css')
         value = locator.get('value', '')
 
         # 验证 value 不为空
@@ -156,6 +212,8 @@ class PlaywrightEngine(TestEngine):
         elif locator_type == 'role':
             # value format: "button[name='Submit']"
             return self.page.get_by_role(value.split('[')[0], **self._parse_role_params(value))
+        elif locator_type == 'test_id':
+            return self.page.get_by_test_id(value)
         else:
             return self.page.locator(value)
 
@@ -364,6 +422,62 @@ class PlaywrightEngine(TestEngine):
                     'actual': 'found' if success else 'not found'
                 }
 
+            elif assert_type == 'enabled':
+                element = self._find_element(locator)
+                is_enabled = element.is_enabled()
+                return {
+                    'success': is_enabled,
+                    'message': f'元素可用性: {is_enabled}'
+                }
+
+            elif assert_type == 'element_value':
+                element = self._find_element(locator)
+                actual = element.input_value()
+                success = str(actual).strip() == str(expected).strip()
+                return {
+                    'success': success,
+                    'message': f'元素值断言: 期望="{expected}", 实际="{actual}"',
+                    'expected': expected,
+                    'actual': actual
+                }
+
+            elif assert_type == 'not_visible':
+                try:
+                    element = self._find_element(locator)
+                    is_visible = element.is_visible()
+                    return {
+                        'success': not is_visible,
+                        'message': f'元素不可见断言: visible={is_visible}, 期望不可见'
+                    }
+                except Exception:
+                    # 元素不存在也视为不可见
+                    return {
+                        'success': True,
+                        'message': '元素不可见断言: 元素不存在, 视为不可见'
+                    }
+
+            elif assert_type == 'not_exists':
+                try:
+                    element = self._find_element(locator)
+                    exists = element.count() > 0
+                    return {
+                        'success': not exists,
+                        'message': f'元素不存在断言: exists={exists}, 期望不存在'
+                    }
+                except Exception:
+                    return {
+                        'success': True,
+                        'message': '元素不存在断言: 元素查找异常, 视为不存在'
+                    }
+
+            elif assert_type == 'disabled':
+                element = self._find_element(locator)
+                is_enabled = element.is_enabled()
+                return {
+                    'success': not is_enabled,
+                    'message': f'元素禁用断言: enabled={is_enabled}, 期望禁用'
+                }
+
             else:
                 return {'success': False, 'error': f'未知的断言类型: {assert_type}'}
 
@@ -479,15 +593,100 @@ class PlaywrightEngine(TestEngine):
         return {'success': False, 'error': '截图失败'}
 
     def _take_screenshot(self, filename: str, full_page: bool = False) -> str:
-        """实际执行截图"""
+        """实际执行截图，返回 MEDIA 相对 URL"""
         try:
             os.makedirs(self.screenshot_dir, exist_ok=True)
             filepath = os.path.join(self.screenshot_dir, f'{filename}.png')
             self.page.screenshot(path=filepath, full_page=full_page)
-            return filepath
+            # 返回 URL 路径而非文件系统绝对路径，便于前端直接展示
+            rel = os.path.relpath(filepath, settings.MEDIA_ROOT)
+            return f'/media/{rel}'.replace('\\', '/')
         except Exception as e:
             self.add_log(f'截图失败: {str(e)}', 'error')
             return None
+
+    # ---- 元素摘要提取（替代原始 DOM 快照，供 AI 自愈分析） ----
+
+    _EXTRACT_ELEMENTS_JS = """
+    (() => {
+        const KEEP_ATTRS = ['id','name','class','type','placeholder','value','role',
+            'aria-label','data-testid','href','title','alt','for','action','method'];
+
+        const results = [];
+        const seen = new Set();
+
+        const all = document.querySelectorAll('*');
+        for (const el of all) {
+            if (el.nodeType !== 1) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 && rect.height === 0) continue;
+
+            const hasId = el.id && el.id.trim();
+            const hasName = el.getAttribute('name');
+            const hasTestId = el.getAttribute('data-testid');
+            const isInteractive = ['A','BUTTON','INPUT','SELECT','TEXTAREA','FORM','LABEL','IMG'].includes(el.tagName);
+            const isHeading = /^H[1-6]$/.test(el.tagName);
+
+            if (!hasId && !hasName && !hasTestId && !isInteractive && !isHeading) continue;
+
+            const tag = el.tagName.toLowerCase();
+            const key = hasId || (hasName + '_' + tag);
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            const attrs = {};
+            for (const a of KEEP_ATTRS) {
+                const v = el.getAttribute(a);
+                if (v !== null && v !== '') attrs[a] = v;
+            }
+            if (attrs.class) {
+                const parts = attrs.class.trim().split(/\\s+/).filter(c =>
+                    c.length >= 2 && !/^(css|sc|styled|_|__)[-_]/.test(c) && !/^[a-z]{1,2}[A-Z0-9]/.test(c)
+                );
+                if (parts.length > 0) attrs.class = parts.slice(0, 5).join(' ');
+                else delete attrs.class;
+            }
+
+            const name = (el.getAttribute('aria-label') || el.getAttribute('title') ||
+                el.getAttribute('alt') || el.getAttribute('placeholder') ||
+                (el.textContent || '').trim()).slice(0, 80);
+
+            const roleMap = {a:'link',button:'button',input: attrs.type==='submit'?'button':'textbox',
+                select:'combobox',textarea:'textbox',form:'form',img:'img',
+                h1:'heading',h2:'heading',h3:'heading',h4:'heading',h5:'heading',h6:'heading',
+                nav:'navigation',main:'main'};
+            const role = attrs.role || roleMap[tag] || '';
+
+            const entry = { tag };
+            if (role) entry.role = role;
+            if (name) entry.name = name;
+            if (Object.keys(attrs).length > 0) entry.attrs = attrs;
+            results.push(entry);
+        }
+
+        let jsonStr = JSON.stringify(results, null, 2);
+        if (jsonStr.length > 20000) {
+            results.splice(80);
+            jsonStr = JSON.stringify(results, null, 2);
+        }
+        return jsonStr;
+    })()
+    """
+
+    def _extract_page_elements(self) -> str:
+        """提取页面元素摘要（role + name + 属性），替代原始 page.content()
+
+        返回 JSON 数组，每个元素包含 tag/role/name/attrs，
+        体积通常为原始 DOM 的 1-2%，LLM 可直接理解。
+        """
+        try:
+            return self.page.evaluate(self._EXTRACT_ELEMENTS_JS)
+        except Exception:
+            # fallback 到原始方式
+            try:
+                return self.page.content()[:30000]
+            except Exception:
+                return ''
 
     def _hover(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """鼠标悬停"""
@@ -510,6 +709,32 @@ class PlaywrightEngine(TestEngine):
         element = self._find_element(locator)
         element.select_option(value)
         return {'success': True, 'message': f'已选择: {value}'}
+
+    def _checkbox(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """复选框操作"""
+        locator = params.get('locator')
+        checked = params.get('checked', True)
+
+        if not locator:
+            return {'success': False, 'error': '缺少locator参数'}
+
+        element = self._find_element(locator)
+        if checked:
+            element.check()
+        else:
+            element.uncheck()
+        return {'success': True, 'message': f'已{"勾选" if checked else "取消勾选"}复选框'}
+
+    def _clear(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """清空输入框"""
+        locator = params.get('locator')
+
+        if not locator:
+            return {'success': False, 'error': '缺少locator参数'}
+
+        element = self._find_element(locator)
+        element.clear()
+        return {'success': True, 'message': '已清空输入框'}
 
     def _upload(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """上传文件"""
@@ -620,3 +845,98 @@ class PlaywrightEngine(TestEngine):
                 'success': False,
                 'error': f'提取变量失败: {str(e)}'
             }
+
+    def _refresh(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """刷新页面"""
+        self.page.reload()
+        return {'success': True, 'message': '页面已刷新'}
+
+    def _back(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """后退"""
+        self.page.go_back()
+        return {'success': True, 'message': '已后退到上一页'}
+
+    def _forward(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """前进"""
+        self.page.go_forward()
+        return {'success': True, 'message': '已前进到下一页'}
+
+    def _double_click(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """双击元素"""
+        locator = params.get('locator')
+        if not locator:
+            return {'success': False, 'error': '缺少locator参数'}
+        element = self._find_element(locator)
+        element.dblclick()
+        return {'success': True, 'message': '已双击元素'}
+
+    def _right_click(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """右键点击元素"""
+        locator = params.get('locator')
+        if not locator:
+            return {'success': False, 'error': '缺少locator参数'}
+        element = self._find_element(locator)
+        element.click(button='right')
+        return {'success': True, 'message': '已右键点击元素'}
+
+    def _press_key(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """按键"""
+        key = params.get('key')
+        if not key:
+            return {'success': False, 'error': '缺少key参数'}
+        self.page.keyboard.press(key)
+        return {'success': True, 'message': f'已按键: {key}'}
+
+    def _new_tab(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """打开新标签页"""
+        url = params.get('url', '')
+        new_page = self.context.new_page()
+        if url:
+            new_page.goto(url)
+        self.page = new_page
+        return {'success': True, 'message': f'已打开新标签页{"并导航到: " + url if url else ""}'}
+
+    def _close_tab(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """关闭当前标签页"""
+        self.page.close()
+        pages = self.context.pages
+        if pages:
+            self.page = pages[-1]
+        return {'success': True, 'message': '已关闭当前标签页'}
+
+    def _set_cookie(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """设置Cookie"""
+        name = params.get('name')
+        value = params.get('value')
+        if not name or value is None:
+            return {'success': False, 'error': '缺少name或value参数'}
+        cookie = {
+            'name': name,
+            'value': value,
+            'url': params.get('url', self.page.url)
+        }
+        if params.get('domain'):
+            cookie['domain'] = params['domain']
+        if params.get('path'):
+            cookie['path'] = params['path']
+        self.context.add_cookies([cookie])
+        return {'success': True, 'message': f'已设置Cookie: {name}'}
+
+    def _download(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """下载文件"""
+        url = params.get('url')
+        if not url:
+            return {'success': False, 'error': '缺少url参数'}
+        save_path = params.get('save_path', '')
+        with self.page.expect_download() as download_info:
+            self.page.goto(url)
+        download = download_info.value
+        if save_path:
+            download.save_as(save_path)
+        else:
+            save_path = download.path()
+        return {
+            'success': True,
+            'message': f'文件已下载: {download.suggested_filename}',
+            'save_path': str(save_path)
+        }

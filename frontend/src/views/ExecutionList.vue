@@ -72,6 +72,9 @@
               </template>
               <template v-else-if="column.key === 'actions'">
                 <a-space>
+                  <a-button size="small" @click="viewDetail(record)">
+                    <EyeOutlined /> 详情
+                  </a-button>
                   <a-button size="small" @click="viewReport(record)">
                     <FileTextOutlined /> 报告
                   </a-button>
@@ -204,7 +207,8 @@ import {
   StopOutlined,
   UnorderedListOutlined,
   SearchOutlined,
-  AppstoreOutlined
+  AppstoreOutlined,
+  EyeOutlined
 } from '@ant-design/icons-vue'
 import { getExecutionList, stopExecution as stopExecutionApi, getExecutionLogs } from '@/api/execution'
 import type { Execution } from '@/types/execution'
@@ -285,7 +289,7 @@ const scriptColumns = [
   { title: '操作', key: 'actions', width: 200, fixed: 'right' }
 ]
 
-let refreshTimer: NodeJS.Timeout | null = null
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
 
 // 加载计划执行记录
 async function loadPlanExecutions() {
@@ -439,7 +443,7 @@ function handleScriptTableChange(pag: any) {
 
 // 查看报告
 function viewReport(execution: Execution) {
-  router.push(`/reports/${execution.id}`)
+  openReportPage(execution.id)
 }
 
 // 停止执行
@@ -454,6 +458,15 @@ async function stopExecution(execution: Execution) {
 }
 
 // 查看日志
+function viewDetail(execution: Execution) {
+  openReportPage(execution.id)
+}
+
+function openReportPage(executionId: number) {
+  const target = router.resolve({ name: 'ReportView', params: { executionId: String(executionId) } })
+  window.location.assign(target.href)
+}
+
 async function viewLogs(execution: Execution) {
   try {
     const res = await getExecutionLogs(execution.id)

@@ -2,7 +2,7 @@ export interface User {
   id: number
   username: string
   email: string
-  role: 'admin' | 'user'
+  role: 'super_admin' | 'admin' | 'tester' | 'user' | 'guest'
   is_active: boolean
   created_at: string
   updated_at: string
@@ -16,4 +16,5 @@ export interface LoginForm {
 export interface LoginResponse {
   message: string
   user: User
+  token: string
 }

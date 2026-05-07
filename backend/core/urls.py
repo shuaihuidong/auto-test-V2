@@ -14,10 +14,11 @@ urlpatterns = [
     path('api/scripts/', include('apps.scripts.urls')),
     path('api/plans/', include('apps.plans.urls')),
     path('api/executions/', include('apps.executions.urls')),
-    # executors app 包含所有相关路由
+    # executors app: variables only (old Executor/TaskQueue/RabbitMQ removed)
     path('api/', include('apps.executors.urls')),
     path('api/reports/', include('apps.reports.urls')),
     path('api/drivers/', include('apps.drivers.urls')),
+    path('api/settings/', include('apps.settings.urls')),
 ]
 
 if settings.DEBUG:

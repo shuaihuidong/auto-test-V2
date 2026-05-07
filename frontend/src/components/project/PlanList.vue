@@ -120,8 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   PlusOutlined,
@@ -142,7 +141,6 @@ const props = withDefaults(defineProps<Props>(), {
   embedMode: false
 })
 
-const router = useRouter()
 const loading = ref(false)
 const plans = ref<any[]>([])
 const availableScripts = ref<any[]>([])
@@ -155,10 +153,11 @@ const pagination = reactive({
 
 const modalVisible = ref(false)
 const isEdit = ref(false)
+const editingId = ref<number | null>(null)
 const form = reactive({
   name: '',
   description: '',
-  execution_order: 'sequential',
+  execution_order: 'sequential' as 'sequential' | 'parallel',
   continue_on_failure: true,
   script_ids: [] as number[],
   cron_expression: ''
@@ -175,7 +174,7 @@ const columns = [
 async function loadPlans() {
   loading.value = true
   try {
-    const data = await planApi.getList({ project: props.projectId })
+    const data = await planApi.getList({ project: props.projectId }) as any
     plans.value = data.results || []
     pagination.total = data.count || 0
   } catch (error) {
@@ -196,10 +195,11 @@ async function loadScripts() {
 
 function showCreateModal() {
   isEdit.value = false
+  editingId.value = null
   Object.assign(form, {
     name: '',
     description: '',
-    execution_order: 'sequential',
+    execution_order: 'sequential' as 'sequential' | 'parallel',
     continue_on_failure: true,
     script_ids: [],
     cron_expression: ''
@@ -209,6 +209,7 @@ function showCreateModal() {
 
 function editPlan(record: any) {
   isEdit.value = true
+  editingId.value = record.id
   Object.assign(form, {
     name: record.name,
     description: record.description,
@@ -258,17 +259,17 @@ function handleCancel() {
   modalVisible.value = false
 }
 
-function viewDetail(record: any) {
+function viewDetail(_record: any) {
   // TODO: 打开计划详情对话框或跳转
   message.info('详情功能开发中')
 }
 
-function runPlan(record: any) {
+function runPlan(_record: any) {
   // TODO: 运行计划
   message.info('运行功能开发中')
 }
 
-function copyPlan(record: any) {
+function copyPlan(_record: any) {
   // TODO: 复制计划
   message.info('复制功能开发中')
 }

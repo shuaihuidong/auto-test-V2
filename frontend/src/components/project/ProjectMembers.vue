@@ -75,7 +75,7 @@
             :options="availableUsers"
             :field-names="{ label: 'label', value: 'value' }"
           >
-            <template #option="{ label, email, value }">
+            <template #option="{ label, email }">
               <div>
                 <div>{{ label }}</div>
                 <small style="color: #999">{{ email }}</small>
@@ -217,7 +217,7 @@ async function handleRoleOk() {
 
   loading.value = true
   try {
-    await projectApi.changeMemberRole(props.projectId, editingMemberId.value, newRole.value)
+    await projectApi.changeMemberRole(props.projectId, Number(editingMemberId.value), newRole.value)
     message.success('角色变更成功')
     roleModalVisible.value = false
     loadMembers()
@@ -230,7 +230,7 @@ async function handleRoleOk() {
 
 async function removeMember(record: ProjectMember) {
   try {
-    await projectApi.removeMember(props.projectId, record.id)
+    await projectApi.removeMember(props.projectId, Number(record.id))
     message.success('移除成功')
     loadMembers()
   } catch (error) {

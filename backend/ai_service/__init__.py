@@ -23,24 +23,46 @@ from .exceptions import AIServiceError, AIProviderError, AIRetryExhaustedError, 
 
 # 模块级单例
 _gateway_instance: LLMGateway | None = None
+_config_hash: str = ""
 
 
 def get_llm_gateway() -> LLMGateway:
     """
     获取 LLM Gateway 单例
 
-    首次调用时从 Django settings 初始化，后续复用同一实例。
+    每次调用时检查 DB config hash，hash 变化则重建 gateway。
     """
-    global _gateway_instance
-    if _gateway_instance is None:
-        _gateway_instance = LLMGateway.from_settings()
+    global _gateway_instance, _config_hash
+
+    try:
+        from apps.settings.resolver import _compute_config_hash
+        current_hash = _compute_config_hash()
+    except Exception:
+        current_hash = ""
+
+    if _gateway_instance is None or current_hash != _config_hash:
+        try:
+            from apps.settings.resolver import get_ai_config
+            config = get_ai_config()
+            _gateway_instance = LLMGateway.from_config(config)
+        except Exception:
+            # fallback 到 Django settings
+            _gateway_instance = LLMGateway.from_settings()
+
+        _config_hash = current_hash
+
     return _gateway_instance
 
 
 def is_ai_configured() -> bool:
-    """检查 AI 服务是否已配置（API Key 非空）"""
-    from django.conf import settings
-    config = getattr(settings, "AI_SERVICE", {})
+    """检查 AI 服务是否已配置（优先检查 DB 配置）"""
+    try:
+        from apps.settings.resolver import get_ai_config
+        config = get_ai_config()
+    except Exception:
+        from django.conf import settings
+        config = getattr(settings, "AI_SERVICE", {})
+
     primary = config.get("PRIMARY_PROVIDER", "openai")
     key_mapping = {
         "openai": "OPENAI_API_KEY",

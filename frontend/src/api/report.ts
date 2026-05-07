@@ -31,6 +31,7 @@ export interface ReportSummary {
   pass_rate: number
   total_duration: number
   execution_id?: number
+  script_id?: number
   script_name?: string
   plan_name?: string
   started_at?: string
@@ -50,6 +51,7 @@ export interface ChartsData {
 
 export interface ScriptReportData {
   id: number
+  execution_id?: number
   name: string
   status: string
   total_count: number
@@ -66,6 +68,7 @@ export interface StatusDistributionPoint {
 
 export interface FailedScriptData {
   name: string
+  execution_id?: number
   reason: string
 }
 
@@ -74,6 +77,8 @@ export interface ChartDataPoint {
   name: string
   duration: number
   success: boolean
+  error?: string
+  message?: string
 }
 
 export interface DistributionDataPoint {
@@ -120,7 +125,7 @@ export interface TrendAnalysis {
   }
 }
 
-export async function getReport(executionId: number): Promise<Report> {
+export async function getReport(executionId: number): Promise<{ results: Report[] }> {
   return get(`/reports/?execution=${executionId}`)
 }
 
@@ -161,4 +166,3 @@ export async function getTrendAnalysis(params: {
 export async function getExecutionScreenshots(executionId: number): Promise<Screenshot[]> {
   return get(`/executions/${executionId}/screenshots/`)
 }
-

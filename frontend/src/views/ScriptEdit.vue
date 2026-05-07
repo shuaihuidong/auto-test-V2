@@ -10,41 +10,16 @@
       @cancel="handleTypeCancel"
     />
 
-    <!-- Executor Selection Modal -->
-    <a-modal
-      v-model:open="showExecutorModal"
-      title="选择执行机"
-      :width="400"
-      @ok="confirmDebug"
-      @cancel="showExecutorModal = false"
-    >
-      <div class="executor-modal-content">
-        <p class="modal-tip">请选择用于调试的执行机：</p>
-        <a-select
-          v-model:value="selectedExecutor"
-          placeholder="请选择执行机"
-          :loading="loadingExecutors"
-          size="large"
-          style="width: 100%"
-        >
-          <a-select-option
-            v-for="executor in availableExecutors"
-            :key="executor.id"
-            :value="executor.id"
-          >
-            <div class="select-option-content">
-              <span class="executor-name">{{ executor.name }}</span>
-              <a-tag v-if="executor.is_online" color="success" size="small">在线</a-tag>
-              <a-tag v-else color="default" size="small">离线</a-tag>
-              <span class="executor-info">
-                {{ executor.platform }} · 负载: {{ executor.current_tasks }}/{{ executor.max_concurrent }}
-              </span>
-            </div>
-          </a-select-option>
-        </a-select>
-        <a-empty v-if="availableExecutors.length === 0" description="暂无可用执行机" :image-size="80" />
-      </div>
-    </a-modal>
+    <!-- Execution Monitor -->
+    <ExecutionMonitor
+      :visible="showMonitor"
+      :execution-id="monitorExecutionId"
+      :script-name="form.name"
+      :total-steps="form.steps?.length || 0"
+      :step-names="form.steps?.map((s: any) => s.name || s.type || '未命名步骤')"
+      @update:visible="showMonitor = $event"
+      @close="showMonitor = false"
+    />
 
     <!-- Page Header -->
     <div class="page-header">
@@ -55,11 +30,48 @@
         <h2>{{ isNew ? '新建脚本' : '编辑脚本' }}</h2>
       </div>
       <div class="header-right">
+        <SimpleButton @click="handleRun" :disabled="!form.steps?.length" variant="primary">
+          <BugOutlined /> 调试
+        </SimpleButton>
+        <SimpleButton @click="handleSandboxRun" :loading="sandboxRunning" :disabled="sandboxRunning || !form.steps?.length">
+          <PlayCircleOutlined /> 沙盒执行
+        </SimpleButton>
         <SimpleButton @click="handleSave" :loading="saving">
           <SaveOutlined /> 保存
         </SimpleButton>
       </div>
     </div>
+
+    <!-- Sandbox Result Card -->
+    <SimpleCard v-if="showSandboxResult && sandboxResult" class="sandbox-result-card">
+      <template #header>
+        <div class="card-title">
+          <CheckCircleOutlined v-if="!sandboxResult.error && sandboxResult.failed === 0" style="color: var(--color-success)" />
+          <CloseCircleOutlined v-else style="color: var(--color-error)" />
+          沙盒执行结果
+          <a-button type="link" size="small" @click="showSandboxResult = false">关闭</a-button>
+        </div>
+      </template>
+      <div v-if="sandboxResult.error" class="sandbox-error">{{ sandboxResult.error }}</div>
+      <template v-else>
+        <div class="sandbox-summary">
+          <a-tag color="blue">总步骤: {{ sandboxResult.total }}</a-tag>
+          <a-tag color="green">通过: {{ sandboxResult.passed }}</a-tag>
+          <a-tag color="red">失败: {{ sandboxResult.failed }}</a-tag>
+        </div>
+        <div class="sandbox-steps">
+          <div v-for="(step, idx) in sandboxResult.steps" :key="idx" class="sandbox-step-item" :class="{ 'step-failed': !step.success }">
+            <CheckCircleOutlined v-if="step.success" style="color: var(--color-success)" />
+            <CloseCircleOutlined v-else style="color: var(--color-error)" />
+            <span class="step-index">#{{ (step.index ?? idx) + 1 }}</span>
+            <span class="step-name">{{ step.name }}</span>
+            <span class="step-type"><a-tag size="small">{{ step.type }}</a-tag></span>
+            <span v-if="step.message" class="step-msg">{{ step.message }}</span>
+            <span v-if="step.error" class="step-error">{{ step.error }}</span>
+          </div>
+        </div>
+      </template>
+    </SimpleCard>
 
     <div class="edit-content">
       <!-- Basic Info Card -->
@@ -71,13 +83,32 @@
         </template>
 
         <div class="info-form">
-          <div class="form-group">
-            <label class="form-label">脚本名称 <span class="required">*</span></label>
-            <SimpleInput
-              v-model="form.name"
-              placeholder="请输入脚本名称"
-              :error="nameError"
-            />
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">所属项目 <span class="required">*</span></label>
+              <a-select
+                v-model:value="form.project"
+                placeholder="请选择项目"
+                :loading="loadingProjects"
+                :class="{ 'ant-select-status-error': projectError }"
+                style="width: 100%"
+                @change="projectError = ''"
+              >
+                <a-select-option v-for="p in projects" :key="p.id" :value="p.id">
+                  {{ p.name }}
+                </a-select-option>
+              </a-select>
+              <div v-if="projectError" class="form-error">{{ projectError }}</div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">脚本名称 <span class="required">*</span></label>
+              <SimpleInput
+                v-model="form.name"
+                placeholder="请输入脚本名称"
+                :error="nameError"
+              />
+            </div>
           </div>
 
           <div class="form-row">
@@ -110,7 +141,7 @@
               <label class="form-label">描述</label>
               <SimpleInput
                 v-model="form.description"
-                type="textarea"
+                :type="'text' as any"
                 placeholder="请输入脚本描述"
                 :rows="2"
               />
@@ -136,7 +167,7 @@
       <div class="editor-card">
         <ScriptEditor
           v-if="!scriptTypeLoading"
-          v-model="form.steps"
+          v-model="form.steps as any"
           :script-type="form.type"
           :framework="form.framework"
           :project-id="form.project"
@@ -157,24 +188,31 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { message, Modal } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
 import {
   ArrowLeftOutlined,
   SaveOutlined,
-  SettingOutlined
+  SettingOutlined,
+  PlayCircleOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  BugOutlined
 } from '@ant-design/icons-vue'
 import ScriptTypeModal from '@/components/ScriptTypeModal.vue'
+import ExecutionMonitor from '@/components/ExecutionMonitor.vue'
 import ScriptEditor from '@/components/ScriptEditor/index.vue'
 import SimpleButton from '@/components/ui/SimpleButton.vue'
 import SimpleInput from '@/components/ui/SimpleInput.vue'
 import SimpleCheckbox from '@/components/ui/SimpleCheckbox.vue'
 import SimpleCard from '@/components/ui/SimpleCard.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
-import { getScript, createScript, updateScript, getScriptModules } from '@/api/script'
-import { executorApi } from '@/api/executor'
+import { getScript, createScript, updateScript, getScriptModules, sandboxExecute } from '@/api/script'
+import { getProjectList } from '@/api/project'
 import { createExecution } from '@/api/execution'
-import type { ScriptForm, ScriptType, Framework } from '@/types/script'
-import type { Executor } from '@/api/executor'
+import type { ScriptForm } from '@/types/script'
+
+type ScriptType = 'web' | 'mobile' | 'api'
+type Framework = 'playwright' | 'appium' | 'httprunner'
 
 const router = useRouter()
 const route = useRoute()
@@ -189,12 +227,18 @@ const scriptTypeLoading = ref(false)
 const showTypeModal = ref(false)
 const modules = ref<any[]>([])
 const nameError = ref('')
+const projectError = ref('')
+const projects = ref<{ id: number; name: string }[]>([])
+const loadingProjects = ref(false)
 
-// Executor related
-const availableExecutors = ref<Executor[]>([])
-const selectedExecutor = ref<number | null>(null)
-const showExecutorModal = ref(false)
-const loadingExecutors = ref(false)
+// Sandbox execution
+const sandboxRunning = ref(false)
+const sandboxResult = ref<any>(null)
+const showSandboxResult = ref(false)
+
+// Execution monitor
+const showMonitor = ref(false)
+const monitorExecutionId = ref(0)
 
 // Track unsaved changes
 const hasUnsavedChanges = ref(false)
@@ -205,7 +249,7 @@ const form = ref<ScriptForm>({
   name: '',
   description: '',
   type: 'web',
-  framework: 'selenium',
+  framework: 'playwright',
   steps: [],
   is_module: false,
   module_name: '',
@@ -221,7 +265,7 @@ watch(() => form.value, (newVal) => {
 // Show type modal for new scripts without type
 onMounted(() => {
   loadModules()
-  loadExecutors()
+  loadProjects()
   if (!isNew.value) {
     loadScript()
   } else {
@@ -265,13 +309,16 @@ async function loadModules() {
   }
 }
 
-async function loadExecutors() {
+async function loadProjects() {
+  loadingProjects.value = true
   try {
-    const res = await executorApi.getAvailable({ project_id: form.value.project })
-    availableExecutors.value = res || []
+    const res = await getProjectList()
+    projects.value = (res.results || []).map((p: any) => ({ id: p.id, name: p.name }))
   } catch (error) {
-    console.error('Failed to load executors:', error)
-    availableExecutors.value = []
+    console.error('Failed to load projects:', error)
+    projects.value = []
+  } finally {
+    loadingProjects.value = false
   }
 }
 
@@ -323,7 +370,14 @@ async function handleSave() {
     return
   }
 
+  if (!form.value.project) {
+    projectError.value = '请选择项目'
+    message.error('请选择项目')
+    return
+  }
+
   nameError.value = ''
+  projectError.value = ''
 
   saving.value = true
   try {
@@ -353,77 +407,78 @@ async function handleRun() {
     return
   }
 
-  // 检查是否有未保存的修改
-  if (hasUnsavedChanges.value) {
-    Modal.confirm({
-      title: '有未保存的修改',
-      content: '脚本有未保存的修改，是否先保存后再调试？',
-      okText: '保存并调试',
-      cancelText: '取消',
-      onOk: async () => {
-        await handleSave()
-        await showExecutorSelector()
-      }
-    })
+  if (!form.value.project) {
+    projectError.value = '请选择项目'
+    message.error('请选择项目')
     return
   }
 
-  // 如果是新建脚本，需要先保存
+  if (!form.value.steps || form.value.steps.length === 0) {
+    message.error('脚本步骤为空')
+    return
+  }
+
+  let currentScriptId: number | null = scriptId ? parseInt(scriptId) : null
+
+  // 新建脚本需要先保存
   if (isNew.value) {
-    Modal.confirm({
-      title: '保存新脚本',
-      content: '调试需要先保存脚本，是否立即保存？',
-      okText: '保存并调试',
-      cancelText: '取消',
-      onOk: async () => {
-        await handleSave()
-        await showExecutorSelector()
-      }
-    })
-    return
+    try {
+      const created = await createScript(form.value)
+      currentScriptId = created.id
+      message.success('脚本已保存')
+    } catch (error) {
+      // Error handled by interceptor
+      return
+    }
+  } else if (hasUnsavedChanges.value) {
+    // 已有脚本有未保存修改
+    await handleSave()
+    if (hasUnsavedChanges.value) return // save failed
   }
 
-  // 已保存的脚本，直接显示执行机选择
-  await showExecutorSelector()
-}
-
-async function showExecutorSelector() {
-  // 重新加载执行机列表
-  loadingExecutors.value = true
-  await loadExecutors()
-  loadingExecutors.value = false
-
-  // 检查是否有可用执行机
-  if (availableExecutors.value.length === 0) {
-    message.warning('暂无可用执行机，请先添加并启动执行机')
+  if (!currentScriptId) {
+    message.error('脚本 ID 无效，请重新打开编辑')
     return
   }
-
-  // 显示执行机选择对话框
-  selectedExecutor.value = null
-  showExecutorModal.value = true
-}
-
-async function confirmDebug() {
-  if (!selectedExecutor.value) {
-    message.error('请选择执行机')
-    return
-  }
-
-  const currentScriptId = scriptId ? parseInt(scriptId) : (await createScript(form.value)).id
 
   try {
-    await createExecution({
-      script_id: currentScriptId,
-      executor_id: selectedExecutor.value
-    })
-    message.success('调试任务已创建')
-    showExecutorModal.value = false
+    const res = await createExecution({ script_id: currentScriptId })
+    monitorExecutionId.value = res.id
+    showMonitor.value = true
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || error?.message || '创建执行失败'
+    message.error(errMsg)
+  }
+}
 
-    // 跳转到执行记录页面
-    router.push('/executions')
-  } catch (error) {
-    console.error('Failed to create execution:', error)
+async function handleSandboxRun() {
+  const steps = form.value.steps
+  if (!steps || steps.length === 0) {
+    message.error('脚本步骤为空')
+    return
+  }
+
+  sandboxRunning.value = true
+  sandboxResult.value = null
+  showSandboxResult.value = false
+
+  try {
+    const res = await sandboxExecute({ steps, headless: true })
+    sandboxResult.value = res.results
+    showSandboxResult.value = true
+
+    if (res.success) {
+      message.success(`执行完成：全部 ${res.results.total} 步通过`)
+    } else {
+      message.warning(`执行完成：${res.results.passed} 通过，${res.results.failed} 失败`)
+    }
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || error?.message || '沙盒执行失败'
+    message.error(errMsg)
+    sandboxResult.value = { error: errMsg }
+    showSandboxResult.value = true
+  } finally {
+    sandboxRunning.value = false
   }
 }
 
@@ -436,7 +491,7 @@ function getTypeLabel(type: ScriptType): string {
   return labels[type]
 }
 
-function getTypeIcon(type: ScriptType) {
+function getTypeIcon(_type: ScriptType) {
   // Would return appropriate icon component
   return null
 }
@@ -453,6 +508,7 @@ function getTypeIcon(type: ScriptType) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--spacing-md);
   margin-bottom: var(--spacing-lg);
 }
 
@@ -500,6 +556,11 @@ function getTypeIcon(type: ScriptType) {
 }
 
 .required {
+  color: var(--color-error);
+}
+
+.form-error {
+  font-size: var(--font-size-sm);
   color: var(--color-error);
 }
 
@@ -558,32 +619,61 @@ function getTypeIcon(type: ScriptType) {
   padding: var(--spacing-xl);
 }
 
-/* Executor Modal */
-.executor-modal-content {
-  padding: var(--spacing-md) 0;
-}
-
-.modal-tip {
+/* Sandbox Result */
+.sandbox-result-card {
   margin-bottom: var(--spacing-md);
-  color: var(--color-text-secondary);
 }
 
-.select-option-content {
+.sandbox-error {
+  color: var(--color-error);
+  padding: var(--spacing-sm);
+  background: #fff2f0;
+  border-radius: var(--radius-sm);
+}
+
+.sandbox-summary {
+  margin-bottom: var(--spacing-md);
+}
+
+.sandbox-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.sandbox-step-item {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: 4px 0;
-  width: 100%;
-}
-
-.select-option-content .executor-name {
+  gap: 8px;
+  padding: 6px 10px;
+  background: #fafafa;
+  border-radius: 4px;
   font-size: 13px;
-  color: #666;
 }
 
-.select-option-content .executor-info {
-  margin-left: auto;
-  font-size: 12px;
+.sandbox-step-item.step-failed {
+  background: #fff2f0;
+}
+
+.sandbox-step-item .step-index {
+  font-weight: 600;
   color: #999;
+  min-width: 24px;
+}
+
+.sandbox-step-item .step-name {
+  font-weight: 500;
+}
+
+.sandbox-step-item .step-msg {
+  color: #666;
+  font-size: 12px;
+}
+
+.sandbox-step-item .step-error {
+  color: var(--color-error);
+  font-size: 12px;
 }
 </style>

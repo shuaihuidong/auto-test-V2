@@ -37,7 +37,7 @@ instance.interceptors.response.use(
     return response.data
   },
   (error) => {
-    const { response, config } = error
+    const { response } = error
     if (response) {
       const { status, data } = response
       // 优先显示后端返回的具体错误消息

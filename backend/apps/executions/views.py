@@ -1,19 +1,33 @@
-from rest_framework import viewsets, filters, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django_filters.rest_framework import DjangoFilterBackend
-from django.utils import timezone
-from datetime import datetime
-from .models import Execution, HealLog
-from .serializers import ExecutionSerializer, ExecutionCreateSerializer, HealLogSerializer, HealLogCreateSerializer
-from apps.users.permissions import IsExecutionOwnerOrAdmin
-import time
+import json
 import logging
+from typing import Any, Dict, List
+
+from asgiref.sync import async_to_sync
+from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from ai_service.client import LLMGateway
+from ai_service.healing import (
+    HealingService,
+    _extract_original_locator_info,
+    _suggested_locator_to_platform,
+)
+from apps.settings.resolver import get_ai_config
+from apps.users.permissions import IsExecutionOwnerOrAdmin
+from apps.scripts.models import Script
+from .services import start_plan_execution, start_script_execution, _script_steps
+from .models import Execution, HealLog
+from .serializers import (
+    ExecutionCreateSerializer,
+    ExecutionSerializer,
+    HealLogSerializer,
+)
 
 logger = logging.getLogger(__name__)
-
-
 class ExecutionViewSet(viewsets.ModelViewSet):
     serializer_class = ExecutionSerializer
     permission_classes = [IsExecutionOwnerOrAdmin]
@@ -24,26 +38,23 @@ class ExecutionViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """获取查询集 - 根据execution_type参数返回不同的执行记录"""
-        queryset = Execution.objects.select_related('plan', 'script', 'created_by').filter(
-            parent__isnull=True  # 只返回父执行记录或单个脚本执行
-        )
+        queryset = Execution.objects.select_related('plan', 'script', 'created_by')
 
-        # 管理员和超级管理员可以看到所有执行记录
+        # 仅列表页隐藏计划下的子执行，详情/动作接口仍需能访问子执行，
+        # 否则报告页里的 AI 自愈会把子执行当成 404。
+        if self.action == 'list':
+            queryset = queryset.filter(parent__isnull=True)
+
         user = self.request.user
         if user.role not in ['admin', 'super_admin']:
             queryset = queryset.filter(created_by=user)
 
-        # 支持按名称筛选
         name = self.request.query_params.get('name', '')
         if name:
-            queryset = queryset.filter(
-                plan__name__icontains=name
-            ) | queryset.filter(
+            queryset = queryset.filter(plan__name__icontains=name) | queryset.filter(
                 script__name__icontains=name
             )
 
-        # 支持按时间范围筛选
         start_time = self.request.query_params.get('start_time', '')
         end_time = self.request.query_params.get('end_time', '')
         if start_time:
@@ -51,24 +62,18 @@ class ExecutionViewSet(viewsets.ModelViewSet):
         if end_time:
             queryset = queryset.filter(created_at__lte=end_time)
 
-        # 支持按执行类型筛选
         execution_type = self.request.query_params.get('execution_type', '')
         if execution_type:
             queryset = queryset.filter(execution_type=execution_type)
 
         return queryset
 
-    def perform_create(self, serializer):
-        """创建执行记录时自动设置创建者"""
-        serializer.save(created_by=self.request.user)
-
     def create(self, request, *args, **kwargs):
-        # 权限检查 - guest 不能创建执行
         user = request.user
         if user.role == 'guest':
             return Response(
-                {'error': '访客无权执行测试，请联系管理员升级权限'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': 'Guest users cannot create executions.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         serializer = ExecutionCreateSerializer(data=request.data)
@@ -76,820 +81,382 @@ class ExecutionViewSet(viewsets.ModelViewSet):
 
         plan_id = serializer.validated_data.get('plan_id')
         script_id = serializer.validated_data.get('script_id')
-        executor_id = serializer.validated_data.get('executor_id')
         execution_mode = serializer.validated_data.get('execution_mode', 'parallel')
 
-        # 如果是计划执行，创建父子执行记录结构
         if plan_id and not script_id:
-            from apps.plans.models import Plan
             try:
+                from apps.plans.models import Plan
+
                 plan = Plan.objects.get(id=plan_id)
             except Plan.DoesNotExist:
-                return Response(
-                    {'error': '计划不存在'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({'error': 'Plan does not exist.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 获取计划中的所有脚本
-            from apps.scripts.models import Script
-            scripts = Script.objects.filter(id__in=plan.script_ids)
-
-            if not scripts.exists():
-                return Response(
-                    {'error': '计划中没有有效的脚本'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # 创建父执行记录（计划执行）
-            parent_execution = Execution.objects.create(
-                execution_type='plan',
-                execution_mode=execution_mode,
-                plan_id=plan_id,
-                status='pending',
-                created_by=request.user
-            )
-
-            # 【修复】为每个脚本创建子执行记录，先批量创建所有执行记录，确保 ID 连续
-            child_executions = []
-
-            # 准备计划中所有脚本的信息（用于执行机显示）
-            plan_scripts_info = []
-            scripts_list = list(scripts)  # 转换为列表以支持多次迭代
-            for script in scripts_list:
-                plan_scripts_info.append({
-                    'id': script.id,
-                    'name': script.name,
-                    'type': script.type,
-                    'framework': script.framework,
-                    'step_count': len(script.steps) if script.steps else 0
-                })
-
-            # 第一阶段：创建所有子执行记录（不创建 TaskQueue）
-            # 不预先生成 display_id，让 save() 方法自动生成（已有重试和锁机制）
-            for index, script in enumerate(scripts_list):
-                # 创建子执行记录，display_id 会在 save() 时自动生成
-                child_execution = Execution(
-                    execution_type='script',
-                    parent=parent_execution,
-                    plan_id=plan_id,
-                    script_id=script.id,
-                    status='pending',
-                    created_by=request.user
-                    # 注意：不设置 display_id，让 save() 方法自动生成
-                )
-                child_execution.save()
-                child_executions.append(child_execution)
-
-            # 第二阶段：为每个子执行创建任务
-            from apps.executors.models import TaskQueue
-
-            for index, script in enumerate(scripts_list):
-                child_execution = child_executions[index]
-
-                # 创建任务数据
-                task_data = self._prepare_script_data(script)
-                task_data['plan_id'] = plan.id
-                task_data['plan_name'] = plan.name
-                task_data['execution_id'] = child_execution.id
-                task_data['parent_execution_id'] = parent_execution.id
-                task_data['execution_mode'] = execution_mode
-                # 添加完整的计划脚本信息
-                task_data['plan_scripts'] = plan_scripts_info
-                task_data['script_index'] = index  # 脚本在计划中的顺序
-                task_data['total_scripts'] = len(scripts_list)  # 总脚本数
-
-                # 根据执行模式设置优先级
-                # 顺序执行：后面的任务优先级较低，确保按顺序执行
-                # 并行执行：所有任务优先级相同
-                priority = 'normal' if execution_mode == 'parallel' else 'low' if index > 0 else 'normal'
-
-                # 如果指定了执行机，直接分配
-                if executor_id:
-                    TaskQueue.objects.create(
-                        execution=child_execution,
-                        executor_id=executor_id,
-                        status='pending',
-                        script_data=task_data,
-                        priority=priority
-                    )
-                else:
-                    # 否则让系统自动分配
-                    TaskQueue.objects.create(
-                        execution=child_execution,
-                        status='pending',
-                        script_data=task_data,
-                        priority=priority
-                    )
-
-            # 触发任务分发
-            from services.task_distributor import TaskDistributor
-            TaskDistributor().distribute_tasks()
-
-            return Response(
-                ExecutionSerializer(parent_execution).data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # 单个脚本执行
-        execution = Execution.objects.create(
-            execution_type='script',
-            plan_id=plan_id,
-            script_id=script_id,
-            status='pending',
-            created_by=request.user
-        )
-
-        # 创建任务队列记录
-        task_data = self._prepare_task_data(execution)
-        from apps.executors.models import TaskQueue
-
-        # 如果指定了执行机，直接分配
-        if executor_id:
-            TaskQueue.objects.create(
-                execution=execution,
-                executor_id=executor_id,
-                status='pending',
-                script_data=task_data,
-                priority='normal'
-            )
-        else:
-            # 否则让系统自动分配
-            TaskQueue.objects.create(
-                execution=execution,
-                status='pending',
-                script_data=task_data,
-                priority='normal'
-            )
-
-        # 触发任务分发
-        from services.task_distributor import TaskDistributor
-        TaskDistributor().distribute_tasks()
-
-        return Response(
-            ExecutionSerializer(execution).data,
-            status=status.HTTP_201_CREATED
-        )
-
-    def _prepare_task_data(self, execution):
-        """准备任务数据（兼容旧代码）"""
-        if execution.script:
-            return self._prepare_script_data(execution.script)
-        # 如果是计划执行但没有单个脚本，返回空数据
-        return {}
-
-    def _prepare_script_data(self, script):
-        """准备单个脚本的任务数据"""
-        from apps.scripts.models import Script
-
-        if not isinstance(script, Script):
             try:
-                script = Script.objects.get(id=script)
-            except Script.DoesNotExist:
-                return {}
+                parent_execution = start_plan_execution(
+                    plan=plan,
+                    user=user,
+                    execution_mode=execution_mode,
+                )
+            except ValueError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return {
-            'script_id': script.id,
-            'name': script.name,  # 执行机期望 'name' 字段
-            'description': script.description,
-            'type': script.type,
-            'framework': script.framework,
-            'steps': script.steps,
-            'variables': script.variables or {},
-            'timeout': script.timeout or 30000,
-            'project_id': script.project_id,
-        }
+            return Response(ExecutionSerializer(parent_execution).data, status=status.HTTP_201_CREATED)
 
-    def update(self, request, *args, **kwargs):
-        """更新执行记录 - 权限检查"""
-        execution = self.get_object()
-        user = request.user
+        try:
+            from apps.scripts.models import Script
 
-        # 管理员及以上有完全权限
-        if user.role in ['admin', 'super_admin']:
-            return super().update(request, *args, **kwargs)
+            script = Script.objects.get(id=script_id)
+        except Script.DoesNotExist:
+            return Response({'error': 'Script does not exist.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 只能更新自己的执行记录
-        if execution.created_by != user:
-            return Response(
-                {'error': '只能操作自己的执行记录'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        plan = None
+        if plan_id:
+            from apps.plans.models import Plan
 
-        return super().update(request, *args, **kwargs)
+            plan = Plan.objects.filter(id=plan_id).first()
 
-    def destroy(self, request, *args, **kwargs):
-        """删除执行记录 - 权限检查"""
-        execution = self.get_object()
-        user = request.user
+        execution = start_script_execution(script=script, user=user, plan=plan)
 
-        # 管理员及以上有完全权限
-        if user.role in ['admin', 'super_admin']:
-            execution.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        # 只能删除自己的执行记录
-        if execution.created_by != user:
-            return Response(
-                {'error': '只能删除自己的执行记录'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        execution.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(ExecutionSerializer(execution).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
     def stop(self, request, pk=None):
-        """停止执行"""
         execution = self.get_object()
         user = request.user
 
-        # 权限检查
-        if user.role not in ['admin', 'super_admin']:
-            if execution.created_by != user:
-                return Response(
-                    {'error': '只能停止自己的执行记录'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        if user.role not in ['admin', 'super_admin'] and execution.created_by != user:
+            return Response(
+                {'error': 'You can only stop your own executions.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if execution.status not in ['pending', 'running', 'paused']:
             return Response(
-                {'error': '只能停止等待中、执行中或已暂停的任务'},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': 'Execution is not pending, running, or paused.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # 保存原始状态，用于后续判断
-        original_status = execution.status
+        from services.execution_runner import ExecutionRunner
 
-        # 先更新父执行状态为stopped（这样任务分发时会检测到并跳过）
         execution.status = 'stopped'
         execution.completed_at = timezone.now()
-        execution.save()
+        execution.save(update_fields=['status', 'completed_at'])
 
-        # 取消所有子任务（包括 pending、assigned、running 状态）
-        from services.task_distributor import TaskDistributor
-        TaskDistributor().cancel_all_child_tasks(execution.id)
-
-        # 如果是计划执行，更新所有子执行的状态
         if execution.execution_type == 'plan':
-            # 获取所有未完成的子执行
-            unfinished_children = Execution.objects.filter(
+            unfinished = Execution.objects.filter(
                 parent_id=execution.id,
-                status__in=['pending', 'running', 'paused']
+                status__in=['pending', 'running', 'paused'],
             )
-
-            for child in unfinished_children:
-                # 将子执行状态更新为stopped
+            for child in unfinished:
+                ExecutionRunner.cancel(child.id)
                 child.status = 'stopped'
                 child.completed_at = timezone.now()
-                # 更新 result 字段，添加停止原因
-                if not child.result:
-                    child.result = {}
-                child.result['success'] = False
-                child.result['message'] = '用户已停止执行'
-                child.result['error'] = '用户已停止执行'
-                child.result['stopped_at'] = timezone.now().isoformat()
-                child.save()
+                result = dict(child.result or {})
+                result['success'] = False
+                result['message'] = 'Stopped by user.'
+                result['error'] = 'Stopped by user.'
+                result['stopped_at'] = timezone.now().isoformat()
+                child.result = result
+                child.save(update_fields=['status', 'completed_at', 'result'])
+        else:
+            ExecutionRunner.cancel(execution.id)
 
-        return Response({'message': '已停止执行'})
+        return Response({'message': 'Execution stopped.'})
 
-    @action(detail=True, methods=['get'], permission_classes=[])
+    @action(detail=True, methods=['get'])
     def status_check(self, request, pk=None):
-        """
-        检查执行状态（轻量级接口，用于执行机验证任务是否有效）
-
-        返回执行状态，执行机根据状态决定是否接收任务
-        只有 running 状态的执行才是有效的
-
-        注意：此接口允许执行机（无认证）访问，用于停止检查逻辑
-        """
-        # 直接查询，避免使用 self.get_object() 导致的权限问题
-        from apps.executions.models import Execution
-        try:
-            execution = Execution.objects.get(pk=pk)
-        except Execution.DoesNotExist:
-            return Response({'error': '执行不存在'}, status=404)
-
-        return Response({
-            'status': execution.status,
-            'is_valid': execution.status == 'running'
-        })
-
-    @action(detail=True, methods=['post'])
-    def debug(self, request, pk=None):
-        """启动调试模式"""
         execution = self.get_object()
-        user = request.user
-
-        # 权限检查
-        if user.role not in ['admin', 'super_admin']:
-            if execution.created_by != user:
-                return Response(
-                    {'error': '只能调试自己的执行记录'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-        if execution.status != 'pending':
-            return Response(
-                {'error': '只能在等待状态下启动调试模式'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        execution.debug_mode = True
-        execution.save()
-
-        # 创建任务队列记录
-        task_data = self._prepare_task_data(execution)
-        task_data['debug_mode'] = True
-        from apps.executors.models import TaskQueue
-        TaskQueue.objects.create(
-            execution=execution,
-            status='pending',
-            script_data=task_data,
-            priority='high'  # 调试模式使用高优先级
-        )
-
-        # 触发任务分发
-        from services.task_distributor import TaskDistributor
-        TaskDistributor().distribute_tasks()
-
         return Response(
-            ExecutionSerializer(execution).data,
-            status=status.HTTP_200_OK
+            {
+                'status': execution.status,
+                'is_valid': execution.status == 'running',
+            }
         )
 
     @action(detail=True, methods=['post'])
     def pause(self, request, pk=None):
-        """暂停执行"""
         execution = self.get_object()
         user = request.user
 
-        # 权限检查
-        if user.role not in ['admin', 'super_admin']:
-            if execution.created_by != user:
-                return Response(
-                    {'error': '只能暂停自己的执行记录'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        if user.role not in ['admin', 'super_admin'] and execution.created_by != user:
+            return Response(
+                {'error': 'You can only pause your own executions.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if execution.status != 'running':
-            return Response(
-                {'error': '只能暂停执行中的任务'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Execution is not running.'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not execution.debug_mode:
-            return Response(
-                {'error': '只能在调试模式下暂停'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Pause is only allowed in debug mode.'}, status=status.HTTP_400_BAD_REQUEST)
 
         execution.status = 'paused'
-        execution.save()
-
-        # 通过 WebSocket 通知执行机暂停
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f'execution_{execution.id}',
-            {
-                'type': 'pause_execution',
-                'data': {'execution_id': execution.id}
-            }
-        )
-
-        return Response({'message': '已暂停执行'})
+        execution.save(update_fields=['status'])
+        return Response({'message': 'Execution paused.'})
 
     @action(detail=True, methods=['post'])
     def resume(self, request, pk=None):
-        """恢复执行"""
         execution = self.get_object()
         user = request.user
 
-        # 权限检查
-        if user.role not in ['admin', 'super_admin']:
-            if execution.created_by != user:
-                return Response(
-                    {'error': '只能恢复自己的执行记录'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-        if execution.status != 'paused':
+        if user.role not in ['admin', 'super_admin'] and execution.created_by != user:
             return Response(
-                {'error': '只能恢复已暂停的任务'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        execution.status = 'running'
-        execution.save()
-
-        # 通过 WebSocket 通知执行机恢复
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f'execution_{execution.id}',
-            {
-                'type': 'resume_execution',
-                'data': {'execution_id': execution.id}
-            }
-        )
-
-        return Response({'message': '已恢复执行'})
-
-    @action(detail=True, methods=['post'])
-    def step(self, request, pk=None):
-        """单步执行"""
-        execution = self.get_object()
-        user = request.user
-
-        # 权限检查
-        if user.role not in ['admin', 'super_admin']:
-            if execution.created_by != user:
-                return Response(
-                    {'error': '只能操作自己的执行记录'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-        if execution.status != 'paused':
-            return Response(
-                {'error': '只能在暂停状态下单步执行'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not execution.debug_mode:
-            return Response(
-                {'error': '只能在调试模式下单步执行'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # 通过 WebSocket 通知执行机单步执行
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f'execution_{execution.id}',
-            {
-                'type': 'step_execution',
-                'data': {'execution_id': execution.id}
-            }
-        )
-
-        return Response({'message': '执行下一步'})
-
-    @action(detail=True, methods=['post'])
-    def breakpoint(self, request, pk=None):
-        """设置/移除断点"""
-        execution = self.get_object()
-        user = request.user
-
-        # 权限检查
-        if user.role not in ['admin', 'super_admin']:
-            if execution.created_by != user:
-                return Response(
-                    {'error': '只能操作自己的执行记录'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-        step_index = request.data.get('step_index')
-        action_type = request.data.get('action', 'add')  # add or remove
-
-        if step_index is None:
-            return Response(
-                {'error': '缺少step_index参数'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        breakpoints = execution.breakpoints or []
-
-        if action_type == 'add':
-            if step_index not in breakpoints:
-                breakpoints.append(step_index)
-                breakpoints.sort()
-        elif action_type == 'remove':
-            if step_index in breakpoints:
-                breakpoints.remove(step_index)
-        else:
-            return Response(
-                {'error': '无效的action，应为add或remove'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        execution.breakpoints = breakpoints
-        execution.save()
-
-        return Response({
-            'message': f'断点已{("添加" if action_type == "add" else "移除")}',
-            'breakpoints': breakpoints
-        })
-
-    @action(detail=True, methods=['get'])
-    def variables(self, request, pk=None):
-        """获取当前变量"""
-        execution = self.get_object()
-        return Response({
-            'variables': execution.variables_snapshot
-        })
-
-    @action(detail=True, methods=['get'])
-    def logs(self, request, pk=None):
-        """获取执行日志"""
-        execution = self.get_object()
-        # 从result中提取日志
-        logs = execution.result.get('logs', []) if execution.result else []
-        return Response({'logs': logs})
-
-    @action(detail=False, methods=['get'])
-    def statistics(self, request):
-        """获取执行统计"""
-        total = self.get_queryset().count()
-        running = self.get_queryset().filter(status='running').count()
-        completed = self.get_queryset().filter(status='completed').count()
-        failed = self.get_queryset().filter(status='failed').count()
-
-        return Response({
-            'total': total,
-            'running': running,
-            'completed': completed,
-            'failed': failed,
-            'success_rate': round(completed / total * 100, 2) if total > 0 else 0
-        })
-
-    @action(detail=True, methods=['get'])
-    def children(self, request, pk=None):
-        """获取子执行记录"""
-        execution = self.get_object()
-        if execution.execution_type != 'plan':
-            return Response(
-                {'error': '只有计划执行记录才有子任务'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        children = execution.children.select_related('script', 'created_by').all()
-        serializer = ExecutionSerializer(children, many=True)
-        return Response(serializer.data)
-
-    # ==================== 智能自愈 API ====================
-
-    @action(detail=True, methods=['post'])
-    def heal(self, request, pk=None):
-        """
-        触发智能自愈 - 分析失败步骤并推荐替代定位器
-        使用同步 httpx.Client 调用 LLM，避免 ASGI 异步上下文冲突
-        """
-        execution = self.get_object()
-        user = request.user
-
-        if user.role == 'guest':
-            return Response(
-                {'error': '访客无权使用自愈功能'},
+                {'error': 'You can only resume your own executions.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        script_id = request.data.get('script_id')
-        step_index = request.data.get('step_index')
-        error_message = request.data.get('error_message', '')
-        dom_snapshot = request.data.get('dom_snapshot', '')
+        if execution.status != 'paused':
+            return Response({'error': 'Execution is not paused.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not script_id or step_index is None:
-            return Response(
-                {'error': '缺少 script_id 或 step_index'},
-                status=400,
-            )
+        if not execution.debug_mode:
+            return Response({'error': 'Resume is only allowed in debug mode.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            from apps.scripts.models import Script
-            from ai_service.healing import (
-                HEAL_SYSTEM_PROMPT,
-                _extract_original_locator_info,
-                _suggested_locator_to_platform,
-            )
-
-            # ---- 同步 ORM 操作 ----
-            try:
-                script = Script.objects.get(id=script_id)
-            except Script.DoesNotExist:
-                return Response({'error': f'脚本不存在: {script_id}'}, status=404)
-
-            steps = script.steps or []
-            step_index_int = int(step_index)
-            if step_index_int < 0 or step_index_int >= len(steps):
-                return Response({'error': f'步骤索引越界: {step_index_int}'}, status=400)
-
-            step = steps[step_index_int]
-            step_name = step.get("name", "")
-            original_locator = step.get("params", {}).get("locator", {})
-
-            # ---- 同步调用 LLM (避免 async 上下文冲突) ----
-            from django.conf import settings as django_settings
-            config = getattr(django_settings, "AI_SERVICE", {})
-
-            # 检查 AI 是否已配置
-            api_key = config.get("OPENAI_API_KEY", "")
-            if not api_key or not api_key.strip():
-                return Response(
-                    {'error': 'AI 服务未配置，请在管理后台设置 LLM API Key'},
-                    status=503,
-                )
-
-            import httpx
-            import json as _json
-
-            api_base = config.get("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/")
-            api_key = config.get("OPENAI_API_KEY", "")
-            model = config.get("OPENAI_MODEL", "gpt-4o")
-            timeout = config.get("TIMEOUT", 60)
-
-            dom_preview = dom_snapshot[:8000] if len(dom_snapshot) > 8000 else dom_snapshot
-            locator_str = _extract_original_locator_info(original_locator)
-
-            user_prompt = (
-                f"请分析以下定位器失败案例：\n\n"
-                f"## 失败信息\n"
-                f"- 步骤名称: {step_name or '未命名步骤'}\n"
-                f"- 步骤索引: {step_index_int}\n"
-                f"- 原始定位器: {locator_str}\n"
-                f"- 错误消息: {error_message}\n\n"
-                f"## 当前页面 DOM 快照\n"
-                f"```html\n{dom_preview}\n```\n\n"
-                f"请推荐一个替代定位器。"
-            )
-
-            messages = [
-                {"role": "system", "content": HEAL_SYSTEM_PROMPT + "\n\n请严格以合法 JSON 格式输出，不要包含 markdown 代码块标记。"},
-                {"role": "user", "content": user_prompt},
-            ]
-
-            url = f"{api_base}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": model,
-                "messages": messages,
-                "temperature": 0.2,
-                "max_tokens": 4096,
-            }
-
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            usage = data.get("usage", {})
-
-            # 清理并解析 JSON
-            content_clean = content.strip()
-            if content_clean.startswith("```"):
-                lines = content_clean.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                content_clean = "\n".join(lines).strip()
-
-            parsed = _json.loads(content_clean)
-
-            suggested_str = parsed.get("suggested_locator", "")
-            locator_type = parsed.get("locator_type", "css")
-            suggested_platform = _suggested_locator_to_platform(suggested_str, locator_type)
-
-            heal_status_val = parsed.get("heal_status", "failed")
-            confidence = min(parsed.get("confidence", 0.0), 1.0)
-            heal_strategy = "llm_recommend"
-
-            # ---- 同步 ORM 写入 HealLog ----
-            heal_log = HealLog.objects.create(
-                script=script,
-                execution=execution,
-                step_index=step_index_int,
-                step_name=step_name,
-                original_locator=locator_str,
-                suggested_locator=suggested_str,
-                locator_type=locator_type,
-                heal_status=heal_status_val,
-                heal_strategy=heal_strategy,
-                confidence=confidence,
-                reason=parsed.get("reason", ""),
-                dom_snapshot=dom_snapshot[:5000],
-                llm_provider="openai",
-                token_consumed=usage.get("total_tokens", 0),
-                auto_applied=False,
-            )
-
-            # 自动应用逻辑
-            auto_applied = False
-            if (
-                heal_status_val == "success"
-                and confidence >= 0.8
-                and script.heal_enabled
-            ):
-                steps[step_index_int]["params"]["locator"] = suggested_platform
-                script.steps = steps
-                script.save(update_fields=["steps", "updated_at"])
-
-                heal_log.auto_applied = True
-                heal_log.save(update_fields=["auto_applied"])
-                auto_applied = True
-
-            result = {
-                "heal_status": heal_status_val,
-                "original_locator": locator_str,
-                "suggested_locator": suggested_str,
-                "suggested_locator_platform": suggested_platform,
-                "locator_type": locator_type,
-                "confidence": confidence,
-                "reason": parsed.get("reason", ""),
-                "target_element": parsed.get("target_element", ""),
-                "heal_strategy": heal_strategy,
-                "auto_applied": auto_applied,
-                "heal_log_id": heal_log.id,
-                "token_usage": {
-                    "prompt_tokens": usage.get("prompt_tokens", 0),
-                    "completion_tokens": usage.get("completion_tokens", 0),
-                    "total_tokens": usage.get("total_tokens", 0),
-                },
-                "model": data.get("model", model),
-                "provider": "openai",
-            }
-
-            return Response(result)
-
-        except Exception as e:
-            logger.error(f"自愈分析失败: {e}")
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {'error': f'自愈分析失败: {str(e)}'},
-                status=500,
-            )
+        execution.status = 'running'
+        execution.save(update_fields=['status'])
+        return Response({'message': 'Execution resumed.'})
 
     @action(detail=True, methods=['get'])
     def heal_logs(self, request, pk=None):
-        """获取执行记录关联的自愈日志"""
         execution = self.get_object()
         logs = HealLog.objects.filter(execution=execution).order_by('-created_at')
-        serializer = HealLogSerializer(logs, many=True)
-        return Response(serializer.data)
+        return Response(HealLogSerializer(logs, many=True).data)
 
     @action(detail=False, methods=['post'])
     def heal_apply(self, request):
-        """
-        手动应用自愈建议（用户审核后确认）
-
-        请求体:
-        {
-            "heal_log_id": 456  # HealLog ID
-        }
-        """
         user = request.user
         if user.role == 'guest':
-            return Response(
-                {'error': '访客无权操作'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            return Response({'error': 'Guest users cannot use healing.'}, status=status.HTTP_403_FORBIDDEN)
 
         heal_log_id = request.data.get('heal_log_id')
         if not heal_log_id:
-            return Response({'error': '缺少 heal_log_id'}, status=400)
+            return Response({'error': 'heal_log_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            heal_log = HealLog.objects.get(id=heal_log_id)
+            heal_log = HealLog.objects.select_related('script', 'execution').get(id=heal_log_id)
         except HealLog.DoesNotExist:
-            return Response({'error': '自愈记录不存在'}, status=404)
+            return Response({'error': 'Heal log does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if user.role not in ['admin', 'super_admin'] and heal_log.execution.created_by != user:
+            return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
 
         if heal_log.auto_applied:
-            return Response({'error': '该建议已应用'}, status=400)
+            return Response({'error': 'This suggestion was already applied.'}, status=status.HTTP_400_BAD_REQUEST)
 
         if heal_log.heal_status != 'success':
-            return Response({'error': '仅成功状态的建议可应用'}, status=400)
+            return Response({'error': 'Only successful suggestions can be applied.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 应用到脚本
-        from apps.scripts.models import Script
         script = heal_log.script
-        steps = script.steps or []
+        steps = _script_steps(script)
+        if heal_log.step_index >= len(steps):
+            return Response({'error': 'Step index out of range.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if heal_log.step_index < len(steps):
-            # 转换建议定位器为平台格式
-            from ai_service.healing import _suggested_locator_to_platform
+        suggested_platform = _suggested_locator_to_platform(
+            heal_log.suggested_locator,
+            heal_log.locator_type,
+        )
+        step_payload = steps[heal_log.step_index]
+        params = step_payload.setdefault('params', {})
+        params['locator'] = suggested_platform
+        script.steps = steps
+        script.save(update_fields=['steps', 'updated_at'])
+
+        heal_log.auto_applied = True
+        heal_log.save(update_fields=['auto_applied'])
+
+        return Response(
+            {
+                'message': 'Healing suggestion applied.',
+                'script_id': script.id,
+                'step_index': heal_log.step_index,
+                'new_locator': suggested_platform,
+            }
+        )
+
+    @action(detail=True, methods=['post'])
+    def batch_heal(self, request, pk=None):
+        user = request.user
+        if user.role == 'guest':
+            return Response({'error': 'Guest users cannot use healing.'}, status=status.HTTP_403_FORBIDDEN)
+
+        execution = self.get_object()
+        if not execution.script_id:
+            return Response({'error': 'Execution is not linked to a script.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            script = Script.objects.get(id=execution.script_id)
+        except Script.DoesNotExist:
+            return Response({'error': 'Script does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+
+        steps_data = (execution.result or {}).get('steps', [])
+        failed_steps = [step for step in steps_data if not step.get('success') and step.get('dom_snapshot')]
+        if not failed_steps:
+            return Response(
+                {
+                    'execution_id': execution.id,
+                    'script_id': script.id,
+                    'analysis_results': [],
+                    'analyzed_count': 0,
+                    'total_tokens': 0,
+                }
+            )
+
+        config = get_ai_config()
+        if not (config.get('OPENAI_API_KEY', '').strip() or config.get('QWEN_API_KEY', '').strip()):
+            return Response(
+                {'error': 'AI service is not configured.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        gateway = LLMGateway.from_config(config)
+        service = HealingService(gateway)
+        analysis_results: List[Dict[str, Any]] = []
+        total_tokens = 0
+
+        for step in failed_steps:
+            step_index = int(step.get('index', 0))
+            step_name = step.get('name', '')
+            error_message = step.get('error', '')
+            dom_snapshot = step.get('dom_snapshot', '')
+
+            if step_index >= len(script.steps or []):
+                continue
+
+            original_locator = script.steps[step_index].get('params', {}).get('locator', {})
+
+            try:
+                result = async_to_sync(service.analyze)(
+                    original_locator=original_locator,
+                    error_message=error_message,
+                    dom_snapshot=dom_snapshot,
+                    step_name=step_name,
+                    step_index=step_index,
+                )
+                total_tokens += result.get('token_usage', {}).get('total_tokens', 0)
+                suggested_platform = result.get('suggested_locator_platform', {})
+                heal_log = HealLog.objects.create(
+                    script=script,
+                    execution=execution,
+                    step_index=step_index,
+                    step_name=step_name,
+                    original_locator=result.get('original_locator', ''),
+                    suggested_locator=result.get('suggested_locator', ''),
+                    locator_type=result.get('locator_type', 'css'),
+                    heal_status=result.get('heal_status', 'failed'),
+                    heal_strategy=result.get('heal_strategy', 'llm_recommend'),
+                    confidence=result.get('confidence', 0.0),
+                    reason=result.get('reason', ''),
+                    dom_snapshot=dom_snapshot[:5000],
+                    llm_provider=result.get('provider', ''),
+                    token_consumed=result.get('token_usage', {}).get('total_tokens', 0),
+                    auto_applied=False,
+                )
+                analysis_results.append(
+                    {
+                        'heal_log_id': heal_log.id,
+                        'step_index': step_index,
+                        'step_name': step_name,
+                        'heal_status': result.get('heal_status', 'failed'),
+                        'original_locator': result.get('original_locator', ''),
+                        'suggested_locator': result.get('suggested_locator', ''),
+                        'suggested_locator_platform': suggested_platform,
+                        'confidence': result.get('confidence', 0.0),
+                        'reason': result.get('reason', ''),
+                    }
+                )
+            except Exception as exc:
+                logger.exception('batch_heal failed for execution %s step %s', execution.id, step_index)
+                heal_log = HealLog.objects.create(
+                    script=script,
+                    execution=execution,
+                    step_index=step_index,
+                    step_name=step_name,
+                    original_locator=_extract_original_locator_info(original_locator),
+                    suggested_locator='',
+                    locator_type='css',
+                    heal_status='failed',
+                    heal_strategy='llm_recommend',
+                    confidence=0.0,
+                    reason=str(exc),
+                    dom_snapshot=dom_snapshot[:5000],
+                    llm_provider='',
+                    token_consumed=0,
+                    auto_applied=False,
+                )
+                analysis_results.append(
+                    {
+                        'heal_log_id': heal_log.id,
+                        'step_index': step_index,
+                        'step_name': step_name,
+                        'heal_status': 'failed',
+                        'original_locator': _extract_original_locator_info(original_locator),
+                        'suggested_locator': '',
+                        'suggested_locator_platform': None,
+                        'confidence': 0.0,
+                        'reason': str(exc),
+                    }
+                )
+
+        return Response(
+            {
+                'execution_id': execution.id,
+                'script_id': script.id,
+                'analysis_results': analysis_results,
+                'analyzed_count': len(analysis_results),
+                'total_tokens': total_tokens,
+            }
+        )
+
+    @action(detail=False, methods=['post'])
+    def heal_batch_apply(self, request):
+        user = request.user
+        if user.role == 'guest':
+            return Response({'error': 'Guest users cannot use healing.'}, status=status.HTTP_403_FORBIDDEN)
+
+        heal_log_ids = request.data.get('heal_log_ids', [])
+        if not isinstance(heal_log_ids, list) or not heal_log_ids:
+            return Response({'error': 'heal_log_ids must be a non-empty list.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        heal_logs = list(HealLog.objects.select_related('script', 'execution').filter(id__in=heal_log_ids))
+        if not heal_logs:
+            return Response({'error': 'No heal logs found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if user.role not in ['admin', 'super_admin']:
+            if any(log.execution.created_by != user for log in heal_logs):
+                return Response({'error': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+        script_ids = {log.script_id for log in heal_logs}
+        if len(script_ids) != 1:
+            return Response({'error': 'Selected heal logs must belong to the same script.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        script = heal_logs[0].script
+        steps = _script_steps(script)
+        applied_count = 0
+
+        for heal_log in heal_logs:
+            if heal_log.heal_status != 'success' or heal_log.auto_applied:
+                continue
+            if heal_log.step_index >= len(steps):
+                continue
+
             suggested_platform = _suggested_locator_to_platform(
                 heal_log.suggested_locator,
                 heal_log.locator_type,
             )
-            steps[heal_log.step_index]["params"]["locator"] = suggested_platform
-            script.steps = steps
-            script.save(update_fields=["steps", "updated_at"])
-
+            step_payload = steps[heal_log.step_index]
+            params = step_payload.setdefault('params', {})
+            params['locator'] = suggested_platform
             heal_log.auto_applied = True
-            heal_log.save(update_fields=["auto_applied"])
+            heal_log.save(update_fields=['auto_applied'])
+            applied_count += 1
 
-            return Response({
-                'message': '自愈建议已应用',
+        if applied_count:
+            script.steps = steps
+            script.save(update_fields=['steps', 'updated_at'])
+
+        return Response(
+            {
+                'message': f'Applied {applied_count} healing suggestions.',
                 'script_id': script.id,
-                'step_index': heal_log.step_index,
-                'new_locator': suggested_platform,
-            })
-
-        return Response({'error': '步骤索引越界'}, status=400)
+                'applied_count': applied_count,
+            }
+        )

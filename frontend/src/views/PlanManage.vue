@@ -134,7 +134,7 @@
           </a-radio-group>
           <template #extra>
             <small style="color: #6B7280;">
-              并行执行：同时执行多个脚本（根据执行机并发数限制）<br>
+              并行执行：同时执行多个脚本（受并发数限制）<br>
               顺序执行：按队列依次执行脚本，一次执行一个
             </small>
           </template>
@@ -178,10 +178,10 @@
       </a-form>
     </a-modal>
 
-    <!-- 执行机选择对话框 -->
+    <!-- 运行确认对话框 -->
     <a-modal
       v-model:open="runModalVisible"
-      title="选择执行机"
+      title="运行计划"
       width="500px"
       @ok="handleRunConfirm"
       @cancel="handleRunCancel"
@@ -197,43 +197,8 @@
           </a-radio-group>
           <template #extra>
             <small style="color: #6B7280;">
-              并行执行：同时执行多个脚本（根据执行机并发数限制）<br>
+              并行执行：同时执行多个脚本（受并发数限制）<br>
               顺序执行：按队列依次执行脚本，一次执行一个
-            </small>
-          </template>
-        </a-form-item>
-        <a-form-item label="选择执行机">
-          <a-select
-            v-model:value="selectedExecutorId"
-            placeholder="留空则系统自动分配"
-            :loading="executorsLoading"
-            allow-clear
-            style="width: 100%"
-          >
-            <a-select-option
-              v-for="executor in availableExecutors"
-              :key="executor.id"
-              :value="executor.id"
-            >
-              <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <span>{{ executor.name }}</span>
-                <a-tag
-                  :color="executor.is_online ? 'success' : 'default'"
-                  size="small"
-                >
-                  {{ executor.is_online ? '在线' : '离线' }}
-                </a-tag>
-              </div>
-              <div style="font-size: 12px; color: #9CA3AF;">
-                {{ executor.platform }} | {{ executor.scope_display }}
-              </div>
-            </a-select-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item>
-          <template #extra>
-            <small style="color: #6B7280;">
-              如果不选择执行机，系统将自动分配给可用的执行机
             </small>
           </template>
         </a-form-item>
@@ -260,7 +225,6 @@ import { getProjectList } from '@/api/project'
 import { getScriptList } from '@/api/script'
 import { createExecution } from '@/api/execution'
 import { planApi } from '@/api/plan'
-import { executorApi, type Executor } from '@/api/executor'
 
 const router = useRouter()
 
@@ -273,13 +237,10 @@ const isEdit = ref(false)
 const editingId = ref<number | null>(null)
 const selectedScriptIds = ref<number[]>([])
 
-// 执行机选择相关
+// 运行相关
 const runModalVisible = ref(false)
 const selectedPlan = ref<any>(null)
-const selectedExecutorId = ref<number | undefined>(undefined)
 const selectedExecutionMode = ref<string>('parallel')
-const availableExecutors = ref<Executor[]>([])
-const executorsLoading = ref(false)
 
 // 筛选条件
 const filterName = ref('')
@@ -344,7 +305,7 @@ function resetFilters() {
 async function loadPlans() {
   loading.value = true
   try {
-    const res = await planApi.getList()
+    const res = await planApi.getList() as any
     plans.value = res.results || []
   } catch (error) {
     // 错误已由拦截器处理
@@ -378,7 +339,8 @@ function showCreateModal() {
     project: undefined,
     description: '',
     schedule_type: 'manual',
-    cron_expression: ''
+    cron_expression: '',
+    execution_mode: 'parallel'
   }
   selectedScriptIds.value = []
   modalVisible.value = true
@@ -409,6 +371,7 @@ async function handleModalOk() {
   try {
     const data = {
       ...form.value,
+      project: form.value.project!,
       script_ids: selectedScriptIds.value
     }
 
@@ -443,28 +406,14 @@ async function handleDelete(plan: any) {
   }
 }
 
-function viewPlan(plan: any) {
+function viewPlan(_plan: any) {
   // TODO: 查看计划详情
 }
 
 async function runPlan(plan: any) {
   selectedPlan.value = plan
-  selectedExecutorId.value = undefined
   selectedExecutionMode.value = plan.execution_mode || 'parallel'
   runModalVisible.value = true
-  await loadExecutors()
-}
-
-async function loadExecutors() {
-  executorsLoading.value = true
-  try {
-    const data = await executorApi.getAvailable({ project_id: selectedPlan.value.project })
-    availableExecutors.value = data || []
-  } catch (error) {
-    availableExecutors.value = []
-  } finally {
-    executorsLoading.value = false
-  }
 }
 
 async function handleRunConfirm() {
@@ -473,7 +422,6 @@ async function handleRunConfirm() {
   try {
     await createExecution({
       plan_id: selectedPlan.value.id,
-      executor_id: selectedExecutorId.value,
       execution_mode: selectedExecutionMode.value
     })
     message.success('执行任务已创建')
@@ -487,7 +435,6 @@ async function handleRunConfirm() {
 function handleRunCancel() {
   runModalVisible.value = false
   selectedPlan.value = null
-  selectedExecutorId.value = undefined
 }
 
 function filterScripts(input: string, option: any) {

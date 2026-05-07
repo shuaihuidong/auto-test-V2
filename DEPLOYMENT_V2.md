@@ -737,9 +737,9 @@ kubectl exec -it deployment/backend -n auto-test -- \
 
 V2.0 执行器从 PyQt6 桌面客户端切换到 Docker 容器:
 
-- 旧版 `executor-client/` (PyQt6) 不再是主要执行方式
-- 新版 `executor-docker/` (Playwright) 通过 Docker 运行
-- 两套执行器可以并存, 分别消费 MQ 任务
+- `executor-docker/` (Playwright) 是 V2.0 的唯一执行器
+- 旧版 `executor-client/` (PyQt6) 已在 V2.0 中移除
+- 通过 Docker Compose 或 Kubernetes 部署执行器
 
 #### 3. 前端更新
 
@@ -816,5 +816,6 @@ auto-test-platform/
 │   ├── debug.py                      # CLI 调试工具
 │   ├── config.py
 │   └── supervisord.conf              # 调试镜像进程管理
-└── executor-client/                  # V1.x 桌面执行器 (仍可用)
+└── scripts/                          # 运维脚本
+    └── generate_secrets.sh           # 安全密钥生成脚本
 ```

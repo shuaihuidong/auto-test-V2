@@ -257,7 +257,15 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 // Types & Config
 import type { TestStep, ScriptType, Framework, StepType } from '@/types/script-editor'
 import { getStepCategories, getDefaultParams } from '@/config/steps'
-import type { StepDefinition, Variable } from '@/types/script-editor'
+import type { StepDefinition } from '@/types/script-editor'
+
+interface Variable {
+  id: string | number
+  name: string
+  type_display: string
+  is_sensitive?: boolean
+  value: any
+}
 
 interface Props {
   modelValue: TestStep[]
@@ -299,11 +307,6 @@ function ensureUniqueIds(steps: TestStep[]): TestStep[] {
   })
 }
 
-// Generate safe key for draggable (handles missing/duplicate IDs)
-function getStepKey(step: TestStep, index: number): string {
-  return step.id || `step_${index}`
-}
-
 // Local state
 const localSteps = ref<TestStep[]>(ensureUniqueIds([...props.modelValue]))
 const selectedStepId = ref<string | null>(null)
@@ -311,9 +314,6 @@ const selectedStep = ref<TestStep | null>(null)
 const editorMode = ref<'visual' | 'json'>('visual')
 const jsonContent = ref('')
 const jsonError = ref('')
-
-// Track external updates to prevent overriding local edits
-const lastExternalUpdate = ref<number>(Date.now())
 
 // Clipboard
 const clipboard = ref<TestStep | null>(null)
@@ -482,10 +482,11 @@ function removeStep(step: TestStep) {
 function copyStep(step: TestStep) {
   clipboard.value = JSON.parse(JSON.stringify(step))
   // Use more unique ID generation to avoid duplicates
+  const copied = clipboard.value!
   const newStep: TestStep = {
-    ...clipboard.value,
+    ...copied,
     id: `step_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    name: `${clipboard.value.name} (副本)`
+    name: `${copied.name} (副本)`
   }
   const index = steps.value.findIndex(s => s.id === step.id)
   steps.value.splice(index + 1, 0, newStep)
@@ -560,7 +561,7 @@ function showVariableSelectorFor(field: string) {
   loadVariables()
 }
 
-function insertVariable(variable: Variable) {
+function insertVariable(_variable: Variable) {
   if (!selectedStep.value) return
   variableSelectorVisible.value = false
 }
@@ -586,7 +587,6 @@ function getTypeLabel(type: ScriptType): string {
 
 function getFrameworkLabel(framework: Framework): string {
   const labels: Record<Framework, string> = {
-    selenium: 'Selenium',
     playwright: 'Playwright',
     appium: 'Appium',
     httprunner: 'HttpRunner'
@@ -594,7 +594,7 @@ function getFrameworkLabel(framework: Framework): string {
   return labels[framework]
 }
 
-function getTypeIcon(type: ScriptType) {
+function getTypeIcon(_type: ScriptType) {
   return null
 }
 

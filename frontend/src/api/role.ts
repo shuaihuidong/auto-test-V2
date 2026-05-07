@@ -1,4 +1,4 @@
-import { get, post, put } from './request'
+import { get } from './request'
 
 export interface Role {
   value: string

@@ -61,4 +61,5 @@ export interface ExecutionCreateForm {
   script_id?: number
   executor_id?: number
   concurrent?: number
+  execution_mode?: string
 }

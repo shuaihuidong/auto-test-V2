@@ -15,13 +15,13 @@ export type ScriptType = 'web' | 'mobile' | 'api'
 /**
  * Supported testing frameworks
  */
-export type Framework = 'selenium' | 'playwright' | 'appium' | 'httprunner'
+export type Framework = 'playwright' | 'appium' | 'httprunner'
 
 /**
  * Framework options available for each script type
  */
 export const FRAMEWORK_MAP: Record<ScriptType, Framework[]> = {
-  web: ['selenium', 'playwright'],
+  web: ['playwright'],
   mobile: ['appium'],
   api: ['httprunner']
 }
@@ -34,14 +34,18 @@ export const FRAMEWORK_MAP: Record<ScriptType, Framework[]> = {
  * Element locator strategies
  */
 export type LocatorType =
-  | 'xpath'
   | 'css'
+  | 'xpath'
   | 'id'
   | 'name'
   | 'class'
   | 'tag'
   | 'link_text'
-  | 'partial_link_text'
+  | 'text'
+  | 'label'
+  | 'placeholder'
+  | 'role'
+  | 'test_id'
 
 /**
  * Element locator definition
@@ -67,12 +71,12 @@ export type StepType =
   // Web - Form Interaction
   | 'submit' | 'reset'
   // Web - Assertion
-  | 'assert_text' | 'assert_element' | 'assert_visible' | 'assert_enabled'
+  | 'assert' | 'assert_text' | 'assert_element' | 'assert_visible' | 'assert_enabled'
   | 'assert_title' | 'assert_url' | 'assert_attribute' | 'assert_value'
   // Web - Wait
   | 'wait' | 'wait_element' | 'wait_text' | 'wait_url' | 'wait_title'
   // Web - Window/Frame
-  | 'switch_window' | 'switch_frame' | 'switch_default' | 'new_tab' | 'close_tab'
+  | 'switch' | 'switch_window' | 'switch_frame' | 'switch_default' | 'new_tab' | 'close_tab'
   // Web - Screenshot
   | 'screenshot'
   // Web - Keyboard
@@ -95,12 +99,12 @@ export type StepType =
   // Mobile - Mobile Web
   | 'switch_context' | 'switch_to_web' | 'switch_to_native'
   // API - Request
-  | 'http_request' | 'graphql_request'
+  | 'request' | 'http_request' | 'graphql_request'
   // API - Validation
   | 'assert_status' | 'assert_jsonpath' | 'assert_header' | 'assert_response_time'
   | 'assert_schema' | 'assert_body_contains'
   // API - Data Processing
-  | 'extract_jsonpath' | 'extract_header' | 'set_variable'
+  | 'extract_jsonpath' | 'extract_header' | 'set_variable' | 'extract_variable'
   // Flow Control
   | 'if' | 'loop' | 'retry' | 'skip'
   // Module
@@ -123,7 +127,7 @@ export interface StepParams {
 
   // Navigation
   url?: string
-  scroll_type?: 'top' | 'bottom' | 'custom'
+  scroll_type?: 'top' | 'bottom' | 'custom' | 'element' | 'position'
   x?: number
   y?: number
 
@@ -199,7 +203,6 @@ export interface StepParams {
 
   // Assertions (API)
   status_code?: number
-  json_path?: string
   response_time?: number
   header_name?: string
   header_value?: string

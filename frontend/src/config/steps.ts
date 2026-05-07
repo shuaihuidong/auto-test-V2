@@ -21,11 +21,7 @@ import {
   RocketOutlined,
   CameraOutlined,
   DragOutlined,
-  ClearOutlined,
   DeleteOutlined,
-  CloseOutlined,
-  CopyOutlined,
-  HolderOutlined,
   // Keyboard Icons
   CodeOutlined,
   ThunderboltOutlined,
@@ -44,12 +40,10 @@ import {
   DownloadOutlined,
   // Data Icons
   SaveFilled,
-  InboxOutlined,
   ExportOutlined,
   CloudServerOutlined,
   // Advanced Icons
   PictureOutlined,
-  WarningOutlined,
   PlusSquareOutlined,
   MinusSquareOutlined,
   // Mobile Icons
@@ -58,8 +52,7 @@ import {
   PhoneOutlined,
   SyncOutlined,
   // API Icons
-  ApiOutlined,
-  ServerOutlined
+  ApiOutlined
 } from '@ant-design/icons-vue'
 
 // ============================================
@@ -107,16 +100,17 @@ const webStepCategories: StepCategory[] = [
         type: 'scroll',
         label: '滚动页面',
         icon: ArrowDownOutlined,
-        defaultParams: { scroll_type: 'bottom', x: 0, y: 0 },
+        defaultParams: { scroll_type: 'position', x: 0, y: 0 },
         description: '滚动页面到指定位置',
         paramSchema: [
           { name: 'scroll_type', label: '滚动方式', type: 'select', required: true, options: [
-            { label: '到顶部', value: 'top' },
-            { label: '到底部', value: 'bottom' },
-            { label: '自定义坐标', value: 'custom' }
+            { label: '到指定坐标', value: 'position' },
+            { label: '到元素位置', value: 'element' },
+            { label: '到底部', value: 'bottom' }
           ]},
-          { name: 'x', label: 'X坐标', type: 'number', default: 0, showIf: (p) => p.scroll_type === 'custom' },
-          { name: 'y', label: 'Y坐标', type: 'number', default: 0, showIf: (p) => p.scroll_type === 'custom' }
+          { name: 'locator', label: '元素定位器', type: 'locator', showIf: (p) => p.scroll_type === 'element' },
+          { name: 'x', label: 'X坐标', type: 'number', default: 0, showIf: (p) => p.scroll_type === 'position' },
+          { name: 'y', label: 'Y坐标', type: 'number', default: 0, showIf: (p) => p.scroll_type === 'position' }
         ]
       }
     ]
@@ -130,7 +124,7 @@ const webStepCategories: StepCategory[] = [
         type: 'click',
         label: '点击',
         icon: ControlOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
+        defaultParams: { locator: { type: 'css', value: '' } },
         description: '单击指定元素',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true }
@@ -140,7 +134,7 @@ const webStepCategories: StepCategory[] = [
         type: 'double_click',
         label: '双击',
         icon: ControlOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
+        defaultParams: { locator: { type: 'css', value: '' } },
         description: '双击指定元素',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true }
@@ -150,7 +144,7 @@ const webStepCategories: StepCategory[] = [
         type: 'right_click',
         label: '右键点击',
         icon: ControlOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
+        defaultParams: { locator: { type: 'css', value: '' } },
         description: '右键点击指定元素',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true }
@@ -160,7 +154,7 @@ const webStepCategories: StepCategory[] = [
         type: 'hover',
         label: '悬停',
         icon: DragOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
+        defaultParams: { locator: { type: 'css', value: '' } },
         description: '鼠标悬停在指定元素上',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true }
@@ -171,7 +165,7 @@ const webStepCategories: StepCategory[] = [
         label: '输入文本',
         icon: FormOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           value: '',
           clear_first: true
         },
@@ -183,20 +177,10 @@ const webStepCategories: StepCategory[] = [
         ]
       },
       {
-        type: 'clear',
-        label: '清空输入',
-        icon: ClearOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
-        description: '清空输入框内容',
-        paramSchema: [
-          { name: 'locator', label: '元素定位器', type: 'locator', required: true }
-        ]
-      },
-      {
         type: 'select',
         label: '下拉选择',
         icon: OrderedListOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' }, value: '' },
+        defaultParams: { locator: { type: 'css', value: '' }, value: '' },
         description: '在下拉列表中选择选项',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true },
@@ -207,7 +191,7 @@ const webStepCategories: StepCategory[] = [
         type: 'checkbox',
         label: '复选框',
         icon: CheckSquareOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' }, checked: true },
+        defaultParams: { locator: { type: 'css', value: '' }, checked: true },
         description: '勾选或取消勾选复选框',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true },
@@ -218,7 +202,7 @@ const webStepCategories: StepCategory[] = [
         type: 'radio',
         label: '单选框',
         icon: BorderOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
+        defaultParams: { locator: { type: 'css', value: '' } },
         description: '选择单选按钮',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true }
@@ -236,7 +220,7 @@ const webStepCategories: StepCategory[] = [
         label: '文本校验',
         icon: SearchOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           text: ''
         },
         description: '验证页面或元素中是否包含指定文本',
@@ -249,7 +233,7 @@ const webStepCategories: StepCategory[] = [
         type: 'assert_element',
         label: '元素存在',
         icon: EyeOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
+        defaultParams: { locator: { type: 'css', value: '' } },
         description: '验证指定元素是否存在',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true }
@@ -259,7 +243,7 @@ const webStepCategories: StepCategory[] = [
         type: 'assert_visible',
         label: '可见性',
         icon: EyeOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
+        defaultParams: { locator: { type: 'css', value: '' } },
         description: '验证指定元素是否可见',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true }
@@ -269,7 +253,7 @@ const webStepCategories: StepCategory[] = [
         type: 'assert_enabled',
         label: '可用性',
         icon: UnlockOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' }, enabled: true },
+        defaultParams: { locator: { type: 'css', value: '' }, enabled: true },
         description: '验证指定元素是否可用',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true },
@@ -318,13 +302,13 @@ const webStepCategories: StepCategory[] = [
       },
       {
         type: 'wait_element',
-        label: '等待元素',
+        label: '等待元素（通常不需要）',
         icon: HourglassOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           timeout: 10
         },
-        description: '等待元素出现在页面上',
+        description: '等待元素出现在页面上。注意：Playwright 的 click/input 等操作已内置自动等待，通常不需要手动添加此步骤',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true },
           { name: 'timeout', label: '超时时间(秒)', type: 'number', default: 10, min: 1 }
@@ -335,7 +319,7 @@ const webStepCategories: StepCategory[] = [
         label: '等待文本',
         icon: SearchOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           text: '',
           timeout: 10
         },
@@ -442,7 +426,7 @@ const webStepCategories: StepCategory[] = [
         label: '上传文件',
         icon: UploadOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           file_path: ''
         },
         description: '上传文件到指定输入框',
@@ -475,88 +459,42 @@ const webStepCategories: StepCategory[] = [
     icon: CloudServerOutlined,
     steps: [
       {
-        type: 'get_cookie',
-        label: '获取Cookie',
-        icon: InboxOutlined,
-        defaultParams: { name: '' },
-        description: '获取指定Cookie值',
-        paramSchema: [
-          { name: 'name', label: 'Cookie名称', type: 'text', required: true }
-        ]
-      },
-      {
-        type: 'set_cookie',
-        label: '设置Cookie',
+        type: 'set_variable',
+        label: '设置变量',
         icon: SaveFilled,
-        defaultParams: {
-          name: '',
-          value: '',
-          domain: '',
-          path: ''
-        },
-        description: '设置Cookie',
+        defaultParams: { name: '', value: '' },
+        description: '设置一个测试变量的值',
         paramSchema: [
-          { name: 'name', label: 'Cookie名称', type: 'text', required: true },
-          { name: 'value', label: 'Cookie值', type: 'text', required: true },
-          { name: 'domain', label: '域名', type: 'text', placeholder: 'example.com' },
-          { name: 'path', label: '路径', type: 'text', placeholder: '/' }
+          { name: 'name', label: '变量名', type: 'text', required: true },
+          { name: 'value', label: '变量值', type: 'text', required: true }
         ]
       },
       {
-        type: 'get_storage',
-        label: '获取存储',
-        icon: InboxOutlined,
-        defaultParams: {
-          type: 'localStorage',
-          key: ''
-        },
-        description: '获取LocalStorage或SessionStorage',
-        paramSchema: [
-          { name: 'type', label: '存储类型', type: 'select', required: true, options: [
-            { label: 'LocalStorage', value: 'localStorage' },
-            { label: 'SessionStorage', value: 'sessionStorage' }
-          ]},
-          { name: 'key', label: '键名', type: 'text', required: true }
-        ]
-      },
-      {
-        type: 'set_storage',
-        label: '设置存储',
-        icon: SaveFilled,
-        defaultParams: {
-          type: 'localStorage',
-          key: '',
-          value: ''
-        },
-        description: '设置LocalStorage或SessionStorage',
-        paramSchema: [
-          { name: 'type', label: '存储类型', type: 'select', required: true, options: [
-            { label: 'LocalStorage', value: 'localStorage' },
-            { label: 'SessionStorage', value: 'sessionStorage' }
-          ]},
-          { name: 'key', label: '键名', type: 'text', required: true },
-          { name: 'value', label: '值', type: 'text', required: true }
-        ]
-      },
-      {
-        type: 'extract',
-        label: '提取数据',
+        type: 'extract_variable',
+        label: '提取变量',
         icon: ExportOutlined,
         defaultParams: {
           name: '',
-          source: 'text',
-          locator: { type: '', value: '' },
-          attribute: ''
+          locator: { type: 'css', value: '' },
+          extract_type: 'text',
+          attribute: '',
+          pattern: ''
         },
-        description: '从页面提取数据到变量',
+        description: '从页面元素提取数据到变量',
         paramSchema: [
           { name: 'name', label: '变量名', type: 'text', required: true },
-          { name: 'source', label: '提取源', type: 'select', required: true, options: [
+          { name: 'extract_type', label: '提取类型', type: 'select', required: true, options: [
             { label: '文本内容', value: 'text' },
-            { label: '属性值', value: 'attribute' }
+            { label: '属性值', value: 'attribute' },
+            { label: '输入值', value: 'value' },
+            { label: 'URL', value: 'url' },
+            { label: '页面标题', value: 'title' },
+            { label: 'Cookie', value: 'cookie' }
           ]},
-          { name: 'locator', label: '元素定位器', type: 'locator', showIf: (p) => p.source !== 'text' },
-          { name: 'attribute', label: '属性名', type: 'text', showIf: (p) => p.source === 'attribute', placeholder: 'value, class, id 等' }
+          { name: 'locator', label: '元素定位器', type: 'locator', showIf: (p) => ['text','attribute','value'].includes(p.extract_type) },
+          { name: 'attribute', label: '属性名', type: 'text', showIf: (p) => p.extract_type === 'attribute' },
+          { name: 'cookie_name', label: 'Cookie名称', type: 'text', showIf: (p) => p.extract_type === 'cookie' },
+          { name: 'pattern', label: '正则提取', type: 'text', placeholder: '可选，如 [0-9]+' }
         ]
       }
     ]
@@ -588,30 +526,6 @@ const webStepCategories: StepCategory[] = [
         description: '执行JavaScript代码',
         paramSchema: [
           { name: 'script', label: 'JavaScript代码', type: 'textarea', required: true, placeholder: 'return document.title;' }
-        ]
-      },
-      {
-        type: 'execute_async_script',
-        label: '执行异步脚本',
-        icon: ThunderboltOutlined,
-        defaultParams: { script: '' },
-        description: '执行异步JavaScript代码',
-        paramSchema: [
-          { name: 'script', label: '异步JavaScript代码', type: 'textarea', required: true, placeholder: 'var callback = arguments[arguments.length - 1]; callback("result");' }
-        ]
-      },
-      {
-        type: 'drag_and_drop',
-        label: '拖拽',
-        icon: DragOutlined,
-        defaultParams: {
-          source_locator: { type: 'xpath', value: '' },
-          target_locator: { type: 'xpath', value: '' }
-        },
-        description: '拖拽元素到目标位置',
-        paramSchema: [
-          { name: 'source_locator', label: '源元素定位器', type: 'locator', required: true },
-          { name: 'target_locator', label: '目标元素定位器', type: 'locator', required: true }
         ]
       }
     ]
@@ -652,7 +566,7 @@ const mobileStepCategories: StepCategory[] = [
         label: '点击',
         icon: ControlOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           x: 0,
           y: 0
         },
@@ -668,7 +582,7 @@ const mobileStepCategories: StepCategory[] = [
         label: '长按',
         icon: ControlOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           duration_ms: 1000
         },
         description: '长按元素',
@@ -797,7 +711,7 @@ const mobileStepCategories: StepCategory[] = [
         type: 'assert_element',
         label: '元素存在',
         icon: EyeOutlined,
-        defaultParams: { locator: { type: 'xpath', value: '' } },
+        defaultParams: { locator: { type: 'css', value: '' } },
         description: '验证元素是否存在',
         paramSchema: [
           { name: 'locator', label: '元素定位器', type: 'locator', required: true }
@@ -808,7 +722,7 @@ const mobileStepCategories: StepCategory[] = [
         label: '文本校验',
         icon: SearchOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           text: ''
         },
         description: '验证文本内容',
@@ -843,7 +757,7 @@ const mobileStepCategories: StepCategory[] = [
         label: '等待元素',
         icon: HourglassOutlined,
         defaultParams: {
-          locator: { type: 'xpath', value: '' },
+          locator: { type: 'css', value: '' },
           timeout: 10
         },
         description: '等待元素出现',
@@ -1162,6 +1076,104 @@ export function isValidStepForType(stepType: string, scriptType: ScriptType): bo
 }
 
 // ============================================
+// FRONTEND→BACKEND STEP MAPPING
+// ============================================
+
+/**
+ * Convert frontend-friendly step names to backend format.
+ * Called when saving/executing scripts to normalize the step type field.
+ */
+export function toBackendStep(step: Record<string, any>): Record<string, any> {
+  const { type, params } = step
+  const result: Record<string, any> = { ...step, params: { ...params } }
+
+  switch (type) {
+    // assert_text → assert (assert_type: 'text')
+    case 'assert_text':
+      result.type = 'assert'
+      result.params = {
+        ...result.params,
+        assert_type: 'text',
+        expected: params?.text ?? ''
+      }
+      break
+
+    // assert_element → assert (assert_type: 'exists')
+    case 'assert_element':
+      result.type = 'assert'
+      result.params = { ...result.params, assert_type: 'exists' }
+      break
+
+    // assert_visible → assert (assert_type: 'visible')
+    case 'assert_visible':
+      result.type = 'assert'
+      result.params = { ...result.params, assert_type: 'visible' }
+      break
+
+    // assert_enabled → assert (assert_type: 'enabled')
+    case 'assert_enabled':
+      result.type = 'assert'
+      result.params = { ...result.params, assert_type: 'enabled' }
+      break
+
+    // assert_title → assert (assert_type: 'title')
+    case 'assert_title':
+      result.type = 'assert'
+      result.params = {
+        ...result.params,
+        assert_type: 'title',
+        expected: params?.expected ?? ''
+      }
+      break
+
+    // assert_url → assert (assert_type: 'url')
+    case 'assert_url':
+      result.type = 'assert'
+      result.params = {
+        ...result.params,
+        assert_type: 'url',
+        expected: params?.expected ?? ''
+      }
+      break
+
+    // wait (固定) → wait (wait_type: 'fixed', duration: 秒×1000)
+    case 'wait':
+      result.params = {
+        ...result.params,
+        wait_type: result.params.wait_type || 'fixed',
+        duration: (result.params.duration ?? 1) * 1000
+      }
+      break
+
+    // wait_element → wait (wait_type: 'selector', duration: timeout×1000)
+    case 'wait_element':
+      result.type = 'wait'
+      result.params = {
+        ...result.params,
+        wait_type: 'selector',
+        duration: (result.params.timeout ?? 10) * 1000
+      }
+      break
+
+    // checkbox → click
+    case 'checkbox':
+      result.type = 'click'
+      break
+
+    // radio → click
+    case 'radio':
+      result.type = 'click'
+      break
+
+    default:
+      // 其他步骤直接透传
+      break
+  }
+
+  return result
+}
+
+// ============================================
 // EXPORTS
 // ============================================
 
@@ -1176,7 +1188,6 @@ export const SCRIPT_TYPE_LABELS: Record<ScriptType, string> = {
 
 // Framework labels
 export const FRAMEWORK_LABELS: Record<string, string> = {
-  selenium: 'Selenium',
   playwright: 'Playwright',
   appium: 'Appium',
   httprunner: 'HttpRunner'

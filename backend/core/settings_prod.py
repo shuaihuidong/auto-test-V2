@@ -31,39 +31,20 @@ CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
 if not CSRF_TRUSTED_ORIGINS or CSRF_TRUSTED_ORIGINS == ['']:
     CSRF_TRUSTED_ORIGINS = ['https://your-domain.com']  # 修改为实际域名
 
-# 数据库配置 - 可使用 PostgreSQL/MySQL
-DATABASE_ENGINE = os.getenv('DB_ENGINE', 'sqlite3')
-
-if DATABASE_ENGINE == 'postgresql':
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('DB_NAME', 'auto_test_platform'),
-            'USER': os.getenv('DB_USER', 'postgres'),
-            'PASSWORD': os.getenv('DB_PASSWORD', ''),
-            'HOST': os.getenv('DB_HOST', 'localhost'),
-            'PORT': os.getenv('DB_PORT', '5432'),
-        }
-    }
-elif DATABASE_ENGINE == 'mysql':
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.mysql',
-            'NAME': os.getenv('DB_NAME', 'auto_test_platform'),
-            'USER': os.getenv('DB_USER', 'root'),
-            'PASSWORD': os.getenv('DB_PASSWORD', ''),
-            'HOST': os.getenv('DB_HOST', 'localhost'),
-            'PORT': os.getenv('DB_PORT', '3306'),
-        }
-    }
-else:
-    # SQLite (默认)
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
+# 数据库配置 - 从主 settings.py 继承 (通过 DB_ENGINE 环境变量控制)
+# 如果需要生产环境专用数据库配置，取消下方注释即可覆盖
+# DATABASE_ENGINE = os.getenv('DB_ENGINE', 'postgresql')
+# if DATABASE_ENGINE == 'postgresql':
+#     DATABASES = {
+#         'default': {
+#             'ENGINE': 'django.db.backends.postgresql',
+#             'NAME': os.getenv('DB_NAME', 'auto_test_platform'),
+#             'USER': os.getenv('DB_USER', 'postgres'),
+#             'PASSWORD': os.getenv('DB_PASSWORD', ''),
+#             'HOST': os.getenv('DB_HOST', 'localhost'),
+#             'PORT': os.getenv('DB_PORT', '5432'),
+#         }
+#     }
 
 # 静态文件收集 - 生产环境需要
 STATIC_ROOT = BASE_DIR / 'staticfiles'

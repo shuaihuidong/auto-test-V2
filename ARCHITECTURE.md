@@ -61,11 +61,11 @@
                                ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          执行层 (Execution)                          │
-│                      PyQt6 Executor Client                          │
+│                  Playwright Docker Executor                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
-│  │   Message    │  │   Task       │  │   Test Engines           │  │
-│  │  Queue       │  │   Manager    │  │  (Selenium/Playwright)   │  │
-│  │   Consumer   │  │   V2         │  │                          │  │
+│  │   Async      │  │   Task       │  │   Playwright Engine      │  │
+│  │  Task        │  │   Manager    │  │  (容器化执行, Trace 录制) │  │
+│  │  Manager     │  │   (aio-pika) │  │                          │  │
 │  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -81,8 +81,8 @@
 - 将任务发布到 RabbitMQ
 - 更新任务状态为 `assigned`
 
-#### 2. MessageQueueClient (消息队列客户端)
-**位置**: `executor-client/message_queue_client.py`
+#### 2. AsyncTaskManager (异步任务管理器)
+**位置**: `executor-docker/task_manager.py`
 
 **职责**:
 - 连接 RabbitMQ 并创建专属队列
@@ -90,8 +90,8 @@
 - 调用 TaskManager 执行任务
 - 处理 ACK/NACK 确认
 
-#### 3. TaskManagerV2 (任务管理器)
-**位置**: `executor-client/task_manager_v2.py`
+#### 3. AsyncTaskManager (任务管理器)
+**位置**: `executor-docker/task_manager.py`
 
 **职责**:
 - 接收任务并启动执行线程
@@ -160,7 +160,7 @@
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ Step 5: 执行机接收任务                                       │
-│ executor-client/message_queue_client.py                      │
+│ executor-docker/task_manager.py                              │
 │                                                              │
 │ def on_message(ch, method, properties, body):               │
 │     task_data = json.loads(body)                             │
@@ -174,7 +174,7 @@
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ Step 6: 执行任务并上报结果                                   │
-│ executor-client/task_manager_v2.py                           │
+│ executor-docker/task_manager.py                              │
 │                                                              │
 │ 1. 启动执行线程                                               │
 │ 2. 执行测试脚本                                               │
@@ -325,7 +325,7 @@ if execution_mode == 'sequential' and parent_execution_id:
 
 #### 控制逻辑
 
-**代码位置**: `executor-client/task_manager_v2.py:232-247`
+**代码位置**: `executor-docker/task_manager.py`
 
 ```python
 def execute_task(self, task_data: dict) -> bool:
@@ -425,7 +425,7 @@ def execute_task(self, task_data: dict) -> bool:
 | **控制机制** | 检查前序任务完成状态 | running_tasks 数量限制 |
 | **分发时机** | 前序任务完成后才分发 | 立即分发所有任务 |
 | **并发保证** | 同时只有1个任务运行 | 最多 max_concurrent 个任务 |
-| **代码位置** | `task_distributor.py:59-96` | `task_manager_v2.py:232-247` |
+| **代码位置** | `task_distributor.py:59-96` | `executor-docker/task_manager.py` |
 | **拒绝处理** | 跳过，等待下次扫描 | NACK + requeue=True |
 
 ---
@@ -522,8 +522,8 @@ keep A                   keep B                  remove C
 
 | 文件 | 行号 | 说明 |
 |------|------|------|
-| `task_manager_v2.py` | 232-247 | 并发控制核心逻辑 |
-| `message_queue_client.py` | 167-178 | NACK + requeue 处理 |
+| `executor-docker/task_manager.py` | - | 并发控制核心逻辑 |
+| `executor-docker/task_manager.py` | - | NACK + requeue 处理 |
 
 ### 问题2: JSON 数据截断导致 HTTP 400
 
@@ -558,7 +558,7 @@ response = requests.post(
 
 | 文件 | 行号 | 说明 |
 |------|------|------|
-| `task_manager_v2.py` | 619-624 | JSON 序列化修复 |
+| `executor-docker/task_manager.py` | - | JSON 序列化修复 |
 
 ### 问题3: 执行机注册重试机制
 
@@ -673,7 +673,7 @@ def _register_executor(self, max_retries: int = 5, initial_delay: float = 2.0) -
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│            MessageQueueClient (执行机)                          │
+│            AsyncTaskManager (执行机)                            │
 │  on_message(ch, method, properties, body):                      │
 │      task_data = json.loads(body)                               │
 │      result = task_manager.execute_task(task_data)              │
@@ -685,7 +685,7 @@ def _register_executor(self, max_retries: int = 5, initial_delay: float = 2.0) -
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              TaskManagerV2 (执行机)                             │
+│              AsyncTaskManager (执行机)                          │
 │  execute_task(task_data):                                       │
 │      # 1. 并发控制检查                                          │
 │      if not check_concurrent_limit(task_data):                  │
@@ -890,8 +890,8 @@ HTTP/1.1 200 OK
 │  │  amqp://guest:guest@localhost:5672                    │  │
 │  └───────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │  执行机客户端 (PyQt6)                                  │  │
-│  │  python main.py                                       │  │
+│  │  执行器 (Playwright Docker)                            │  │
+│  │  docker compose up -d executor                        │  │
 │  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -954,8 +954,8 @@ HTTP/1.1 200 OK
 |----------|----------|
 | `backend/services/task_distributor.py` | 任务分发服务 |
 | `backend/apps/executors/services.py` | 执行机选择算法 |
-| `executor-client/task_manager_v2.py` | 并发控制核心 |
-| `executor-client/message_queue_client.py` | RabbitMQ 消费者 |
+| `executor-docker/task_manager.py` | 异步任务管理 (并发控制) |
+| `executor-docker/executor.py` | Playwright 执行引擎 |
 | `backend/apps/executions/models.py` | Execution 模型 |
 | `backend/apps/tasks/models.py` | TaskQueue 模型 |
 

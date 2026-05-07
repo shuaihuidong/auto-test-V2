@@ -23,7 +23,7 @@
     </div>
 
     <!-- Framework Selection -->
-    <div v-if="selectedScriptType" class="framework-selection">
+    <div v-if="selectedScriptType && frameworkOptions.length > 1" class="framework-selection">
       <h4 class="selection-title">选择测试框架</h4>
       <div class="framework-grid">
         <div
@@ -39,6 +39,14 @@
           </span>
         </div>
       </div>
+    </div>
+
+    <!-- Auto-selected framework info (when only one option) -->
+    <div v-if="selectedScriptType && frameworkOptions.length === 1 && selectedFramework" class="auto-framework-info">
+      <a-tag color="blue">
+        <component :is="getFrameworkIcon(selectedFramework)" /> {{ frameworkOptions[0].label }}
+      </a-tag>
+      <span class="auto-hint">已自动选择测试框架</span>
     </div>
 
     <!-- Error Message -->
@@ -70,9 +78,7 @@ import {
   GlobalOutlined,
   MobileOutlined,
   ApiOutlined,
-  ChromeOutlined,
   CodeOutlined,
-  AppleOutlined,
   RocketOutlined
 } from '@ant-design/icons-vue'
 import type { ScriptType, Framework } from '@/types/script-editor'
@@ -141,15 +147,9 @@ const scriptTypeOptions: ScriptTypeOption[] = [
 const frameworkOptionsMap: Record<ScriptType, FrameworkOption[]> = {
   web: [
     {
-      value: 'selenium',
-      label: 'Selenium',
-      description: '经典的 Web 自动化测试框架，支持多种浏览器',
-      icon: 'selenium'
-    },
-    {
       value: 'playwright',
       label: 'Playwright',
-      description: '现代化 Web 测试框架 (功能测试中，暂不可用)',
+      description: '现代化 Web 测试框架',
       icon: 'playwright'
     }
   ],
@@ -157,7 +157,7 @@ const frameworkOptionsMap: Record<ScriptType, FrameworkOption[]> = {
     {
       value: 'appium',
       label: 'Appium',
-      description: '跨平台移动应用自动化测试框架 (功能测试中，暂不可用)',
+      description: '跨平台移动应用自动化测试框架',
       icon: 'appium'
     }
   ],
@@ -165,7 +165,7 @@ const frameworkOptionsMap: Record<ScriptType, FrameworkOption[]> = {
     {
       value: 'httprunner',
       label: 'HttpRunner',
-      description: '简洁强大的 HTTP API 测试框架 (功能测试中，暂不可用)',
+      description: '简洁强大的 HTTP API 测试框架',
       icon: 'httprunner'
     }
   ]
@@ -203,22 +203,19 @@ watch(visible, (newValue) => {
 // Methods
 function selectScriptType(type: ScriptType) {
   selectedScriptType.value = type
-  // Reset framework when type changes
-  selectedFramework.value = null
+  // Auto-select framework if only one option available
+  const options = frameworkOptionsMap[type]
+  if (options.length === 1) {
+    selectedFramework.value = options[0].value
+  } else {
+    selectedFramework.value = null
+  }
   errorMessage.value = ''
 }
 
 function selectFramework(framework: Framework) {
   selectedFramework.value = framework
-  if (framework === 'playwright') {
-    errorMessage.value = '⚠️ Playwright 框架目前在功能测试中暂不可用，请选择 Selenium'
-  } else if (framework === 'appium') {
-    errorMessage.value = '⚠️ Appium 框架目前在功能测试中暂不可用，请选择其他框架'
-  } else if (framework === 'httprunner') {
-    errorMessage.value = '⚠️ HttpRunner 框架目前在功能测试中暂不可用，请选择其他框架'
-  } else {
-    errorMessage.value = ''
-  }
+  errorMessage.value = ''
 }
 
 function typeCardClasses(type: ScriptType) {
@@ -250,7 +247,6 @@ function getTypeIcon(type: ScriptType) {
 
 function getFrameworkIcon(framework: Framework) {
   const iconMap: Record<Framework, any> = {
-    selenium: ChromeOutlined,
     playwright: RocketOutlined,
     appium: MobileOutlined,
     httprunner: CodeOutlined
@@ -379,5 +375,20 @@ defineExpose({
   color: var(--color-error);
   font-size: var(--font-size-sm);
   text-align: center;
+}
+
+.auto-framework-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.auto-hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
 }
 </style>

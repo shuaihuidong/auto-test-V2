@@ -258,7 +258,12 @@ class ReportGenerator:
                 'duration': step_result.get('duration', 0),
                 'success': step_result.get('success', False),
                 'message': step_result.get('message', ''),
-                'error': '' if step_result.get('success') else step_result.get('message', '执行失败')
+                'error': '' if step_result.get('success') else (step_result.get('error') or step_result.get('message', '执行失败')),
+                'screenshot': step_result.get('screenshot', ''),
+                'healed': step_result.get('healed', False),
+                'original_locator': step_result.get('original_locator'),
+                'suggested_locator': step_result.get('suggested_locator'),
+                'confidence': step_result.get('confidence', 0),
             })
 
         # 耗时分布
@@ -330,6 +335,7 @@ class ReportGenerator:
 
             script_data.append({
                 'id': child.id,
+                'execution_id': child.id,
                 'name': child.script.name if child.script else f'Script {child.id}',
                 'status': child.status,
                 'duration': child.duration or 0,
@@ -373,6 +379,7 @@ class ReportGenerator:
 
             failed_scripts.append({
                 'name': child.script.name if child.script else f'Script {child.id}',
+                'execution_id': child.id,
                 'reason': reason,
                 'suggestion': suggestion,
                 'failed_step_name': failed_step.get('name') if failed_step else None,

@@ -52,22 +52,22 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '计划管理' }
       },
       {
-        path: 'executors',
-        name: 'Executors',
-        component: () => import('@/views/ExecutorManage.vue'),
-        meta: { title: '执行机管理' }
-      },
-      {
-        path: 'variables',
-        name: 'Variables',
-        component: () => import('@/views/VariableManage.vue'),
-        meta: { title: '变量管理' }
-      },
-      {
         path: 'executions',
         name: 'Executions',
         component: () => import('@/views/ExecutionList.vue'),
         meta: { title: '执行记录' }
+      },
+      {
+        path: 'batch-tasks',
+        name: 'BatchTasks',
+        component: () => import('@/views/BatchTaskCenter.vue'),
+        meta: { title: 'AI 任务中心' }
+      },
+      {
+        path: 'batch-tasks/:id',
+        name: 'BatchTaskDetail',
+        component: () => import('@/views/BatchTaskDetail.vue'),
+        meta: { title: '任务详情' }
       },
       {
         path: 'reports/:executionId',
@@ -80,6 +80,12 @@ const routes: RouteRecordRaw[] = [
         name: 'AccountRole',
         component: () => import('@/views/AccountRoleManage.vue'),
         meta: { title: '账号角色管理', requiresAuth: true }
+      },
+      {
+        path: 'ai-settings',
+        name: 'AISettings',
+        component: () => import('@/views/AISettings.vue'),
+        meta: { title: 'AI 设置', requiresAuth: true, requiresAdmin: true }
       },
       {
         path: 'help',
@@ -97,7 +103,7 @@ const router = createRouter({
 })
 
 // 路由守卫
-router.beforeEach((to, from, next) => {
+router.beforeEach((to, _from, next) => {
   const userStore = useUserStore()
 
   // 需要登录且未登录
