@@ -1,16 +1,40 @@
 # Auto Test Platform V2.0 - 部署文档
 
 > **版本**: V2.0
-> **更新日期**: 2026-04-21
-> **适用范围**: Docker Compose 单机部署 / Kubernetes 集群部署
+> **更新日期**: 2026-08-31（对照源码修订）
+> **适用范围**: 本机进程部署（推荐） / 精简 Docker（前端 + 后端 + Redis）
+
+---
+
+## 先看这里（和仓库代码一致）
+
+当前后端 **已经不用独立执行器**。执行发生在 Django 进程里：
+
+\POST /api/executions/\ → \ExecutionRunner\ 线程池 → \PlaywrightEngine\
+
+因此：
+
+| 问题 | 结论 |
+|------|------|
+| 还要不要单独执行机？ | **不要。** 后端所在机器/容器能跑 Chromium 即可 |
+| 还要不要 \executor-docker\？ | **本仓库没有该目录，也不走这条路径** |
+| 还要不要 RabbitMQ？ | **当前执行链路不需要。** compose 里的 rabbitmq 是早期残留 |
+| Redis？ | 生产 WebSocket（Channels）需要；本机 \start-all.ps1 -Mode local\ 用内存 Channel，可不装 |
+
+\docker-compose.yml\ 仍声明 \executor\、\executor-debug\、\
+abbitmq\。直接 \docker compose up\ **会因缺少 \./executor-docker\ 构建失败**。部署时不要启动这些服务。
+
+当前 \ackend/Dockerfile\ **没有安装 Playwright 浏览器**。若用容器跑用例，必须给 backend 镜像补 \playwright install --with-deps chromium\，否则页面能开、脚本跑不了。
 
 ---
 
 ## 目录
 
+- [先看这里（和仓库代码一致）](#先看这里和仓库代码一致)
+- [推荐：本机 / 服务器进程部署](#推荐本机--服务器进程部署)
 - [架构概览](#架构概览)
 - [环境要求](#环境要求)
-- [部署方式一：Docker Compose (推荐)](#部署方式一docker-compose-推荐)
+- [部署方式一：Docker Compose](#部署方式一docker-compose-推荐)
 - [部署方式二：Kubernetes](#部署方式二kubernetes)
 - [环境变量参考](#环境变量参考)
 - [AI 服务配置](#ai-服务配置)
@@ -23,61 +47,90 @@
 
 ---
 
+## 推荐：本机 / 服务器进程部署
+
+这与日常「本地跑起来」的方式相同，适合 2～4 核、4GB 左右的云主机。
+
+\\\ash
+# 后端
+cd backend
+pip install -r requirements.txt
+playwright install chromium
+export DJANGO_SETTINGS_MODULE=core.settings_prod
+export DJANGO_SECRET_KEY='请换成随机串'
+export DJANGO_ALLOWED_HOSTS='你的域名或IP'
+export CORS_ALLOWED_ORIGINS='http://你的IP,https://你的IP'
+export CSRF_TRUSTED_ORIGINS='http://你的IP,https://你的IP'
+export CHANNEL_LAYER_BACKEND=inmemory
+export DB_ENGINE=sqlite3
+python manage.py migrate --noinput
+python create_admin.py
+daphne -b 0.0.0.0 -p 8000 core.asgi:application
+\\\
+
+\\\ash
+# 前端生产构建后用 nginx 反代 /api 到 8000
+cd frontend
+npm install && npm run build
+\\\
+
+Windows 开发机：
+
+\\\powershell
+.\start-all.ps1 -Mode local
+\\\
+
+默认管理员：\dmin\ / \dmin123\（上线后立刻改密）。
+
+并发：环境变量 \MAX_CONCURRENT_EXECUTIONS\（默认 3）。内存不足时设为 \1\。
+
+---
+
 ## 架构概览
 
-V2.0 相比 V1.x 的核心变化：
+V2.0 相比 V1.x（**以当前代码为准**）：
 
-| 变更项 | V1.x | V2.0 |
-|--------|------|------|
-| 测试引擎 | Selenium + PyQt6 桌面客户端 | Playwright + Docker 容器化执行器 |
-| AI 能力 | 无 | LLM Gateway + NL2Script + Self-healing |
-| 调试方式 | 本地 GUI | Trace 录制 + noVNC + CLI 工具 |
-| 部署方案 | 手动部署 | Docker Compose / Kubernetes + Helm |
-| 执行器扩展 | 手动添加 | HPA 自动伸缩 (K8s) / docker-compose scale |
+| 变更项 | V1.x | 当前 V2 代码 |
+|--------|------|----------------|
+| 测试引擎 | Selenium + PyQt6 桌面客户端 | 后端进程内 Playwright（ExecutionRunner） |
+| AI 能力 | 无 | LLM Gateway + NL2Script + 失败步骤分析 |
+| 调试方式 | 本地 GUI | 本机 headed / 报告时间线 / 截图 |
+| 部署方案 | 手动 | 进程部署，或精简 Compose（勿启 executor） |
+| 扩展 | 多台执行机 | 加大 MAX_CONCURRENT_EXECUTIONS 或加后端规格 |
 
-### 系统架构图
+### 当前系统架构图
 
-```
+\\\
                     ┌──────────────────────┐
-                    │    Nginx / Ingress   │
-                    │   (SSL 终止 + 路由)   │
+                    │   Nginx（可选）       │
                     └──────┬───────┬───────┘
                            │       │
                ┌───────────┘       └───────────┐
                ▼                               ▼
     ┌──────────────────┐             ┌──────────────────┐
-    │   Frontend (Vue) │             │  Backend (Django) │
-    │   Port 80/443    │             │  Port 8000        │
-    │   Nginx 托管 SPA  │◄── /api ──►│  DRF + Channels   │
-    └──────────────────┘             │  + AI Service     │
-                                     └────┬────┬────────┘
-                                          │    │
-                              ┌───────────┘    └───────────┐
-                              ▼                            ▼
-                    ┌──────────────────┐        ┌──────────────────┐
-                    │  Redis (缓存)     │        │  RabbitMQ (MQ)   │
-                    │  Port 6379       │        │  Port 5672/15672 │
-                    └──────────────────┘        └────────┬────────┘
-                                                         │ 任务分发
-                                          ┌──────────────┼──────────────┐
-                                          ▼              ▼              ▼
-                                   ┌────────────┐ ┌────────────┐ ┌────────────┐
-                                   │ Executor-1 │ │ Executor-2 │ │ Executor-N │
-                                   │ Playwright │ │ Playwright │ │ Playwright │
-                                   │ HPA 自动伸缩│ │            │ │            │
-                                   └────────────┘ └────────────┘ └────────────┘
-```
+    │   Frontend       │             │  Backend         │
+    │   80 / 5173      │◄── /api ──►│  Django+Playwright│
+    └──────────────────┘             │  ExecutionRunner │
+                                     └────────┬─────────┘
+                                              │
+                                     ┌────────▼─────────┐
+                                     │ Redis（生产 WS）  │
+                                     │ 可改为 inmemory   │
+                                     └──────────────────┘
+\\\
 
-### 组件清单
+### 组件清单（当前需要 / 不需要）
 
-| 组件 | 镜像 | 端口 | 说明 |
-|------|------|------|------|
-| frontend | `auto-test-frontend:latest` | 80, 443 | Vue3 SPA, Nginx 托管 |
-| backend | `auto-test-backend:latest` | 8000 | Django + DRF + Channels |
-| executor | `auto-test-executor:latest` | - | Playwright 执行引擎 |
-| executor-debug | `auto-test-executor:latest` (debug build) | 6080 | 带 noVNC 的调试执行器 |
-| redis | `redis:7-alpine` | 6379 | 缓存 + Channel 层 |
-| rabbitmq | `rabbitmq:3.12-management` | 5672, 15672 | 消息队列 |
+| 组件 | 是否需要 | 说明 |
+|------|----------|------|
+| frontend | 需要 | Vue3 SPA |
+| backend | 需要 | Django + ExecutionRunner + 浏览器 |
+| redis | 生产建议 | Channels；单机可用 CHANNEL_LAYER_BACKEND=inmemory |
+| playwright chromium | **需要** | 装在后端同一环境 |
+| rabbitmq | 不需要 | compose 残留 |
+| executor / executor-debug | 不需要 | 目录不存在，代码不消费 |
+
+> 下文「环境要求」之后仍保留早期 Docker Compose / Kubernetes / 执行器调试 原文，**仅作历史参考**。按那些章节 \scale executor\ 在本仓库会失败。
 
 ---
 
@@ -87,9 +140,9 @@ V2.0 相比 V1.x 的核心变化：
 
 | 部署规模 | CPU | 内存 | 磁盘 | 说明 |
 |----------|-----|------|------|------|
-| 最小 (体验) | 2 核 | 4 GB | 20 GB | 1 个执行器 |
-| 标准 (团队) | 4 核 | 8 GB | 50 GB | 2-3 个执行器 |
-| 生产 (企业) | 8 核+ | 16 GB+ | 100 GB+ | HPA 自动伸缩, 可达 10 个执行器 |
+| 最小 (体验) | 2 核 | 4 GB | 20 GB | 后端内 1 个并发浏览器 |
+| 标准 (团队) | 4 核 | 8 GB | 50 GB | `MAX_CONCURRENT_EXECUTIONS=2~3` |
+| 生产 (企业) | 8 核+ | 16 GB+ | 100 GB+ | 加大并发或拆多实例后端；不是 HPA 拉起 executor 容器 |
 
 ### 软件要求
 
@@ -733,13 +786,11 @@ kubectl exec -it deployment/backend -n auto-test -- \
   python manage.py migrate --noinput
 ```
 
-#### 2. 执行器切换
+#### 2. 执行器切换（历史 vs 当前）
 
-V2.0 执行器从 PyQt6 桌面客户端切换到 Docker 容器:
-
-- `executor-docker/` (Playwright) 是 V2.0 的唯一执行器
-- 旧版 `executor-client/` (PyQt6) 已在 V2.0 中移除
-- 通过 Docker Compose 或 Kubernetes 部署执行器
+- V1：PyQt6 桌面客户端 + 本机浏览器驱动
+- 早期 V2 文档：`executor-docker/` 容器执行器（**本仓库已无该目录**）
+- **当前代码**：后端 `ExecutionRunner` + `playwright install chromium`，无需独立执行器
 
 #### 3. 前端更新
 
@@ -807,15 +858,10 @@ auto-test-platform/
 │   ├── Dockerfile
 │   ├── package.json
 │   └── src/
-├── executor-docker/                  # V2.0 容器化执行器
-│   ├── Dockerfile                    # 生产镜像
-│   ├── Dockerfile.debug              # 调试镜像 (含 noVNC)
-│   ├── main.py                       # 入口
-│   ├── executor.py                   # Playwright 引擎
-│   ├── task_manager.py               # 异步任务管理
-│   ├── debug.py                      # CLI 调试工具
-│   ├── config.py
-│   └── supervisord.conf              # 调试镜像进程管理
-└── scripts/                          # 运维脚本
-    └── generate_secrets.sh           # 安全密钥生成脚本
+├── backend/services/execution_runner.py  # 当前执行入口
+├── backend/engine/playwright_engine.py
+└── scripts/
+    └── generate_secrets.sh
 ```
+
+当前仓库 **没有** `executor-docker/`。k8s/helm 中的 `executor.yaml` 为早期残留。

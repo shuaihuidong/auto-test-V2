@@ -5,6 +5,19 @@
 
 ---
 
+## 2026-08-31 — 文档与代码对齐
+
+对照当前源码修订 README / ARCHITECTURE / DEPLOYMENT_V2：
+
+- **实际执行路径**是 `ExecutionRunner`（`backend/services/execution_runner.py`），在 Django 进程内用线程池跑 Playwright。
+- 旧 Executor / TaskQueue / RabbitMQ 分发已从 `backend/core/urls.py` 移除；`apps/executors` 只保留变量管理。
+- 仓库 **没有** `executor-docker/`。compose / k8s / helm 里的 executor、RabbitMQ 属于早期方案残留，部署时不要当现行架构。
+- 本机等价于 `start-all.ps1 -Mode local`：SQLite + 内存 Channel + `playwright install chromium`。
+
+下文 2026-04-21 条目仍记录当时「Docker 执行器」的开发过程，与当前运行方式可能不一致。
+
+---
+
 ## 2026-04-21 — V2.0 全量升级 (初始提交)
 
 **提交哈希**: `847ef70`

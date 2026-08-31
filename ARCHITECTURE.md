@@ -1,107 +1,112 @@
 # 系统架构文档
 
+> **文档状态（2026-08-31 对照源码修订）**  
+> 当前代码的执行链路是 **Django 进程内 `ExecutionRunner` + Playwright**。  
+> 下文从「任务分发机制」起，大量描述 RabbitMQ、`executor-docker`、TaskDistributor、独立执行机，那是早期 V2 设计，**已不适用于本仓库**：
+>
+> - `backend/core/urls.py`：`executors` 仅变量管理，旧 Executor / TaskQueue / RabbitMQ 已移除  
+> - `backend/apps/executions/services.py`：创建执行后直接 `ExecutionRunner.start()`  
+> - `backend/apps/executors/consumers_v2.py`：任务下发已迁移到轻量化执行引擎  
+> - 仓库中 **不存在** `executor-docker/`、`task_distributor.py`
+
 ## 目录
 
-1. [概述](#概述)
-2. [核心架构设计](#核心架构设计)
-3. [任务分发机制](#任务分发机制)
-4. [执行模式详解](#执行模式详解)
-5. [关键问题与解决方案](#关键问题与解决方案)
-6. [数据流详解](#数据流详解)
-7. [通信协议](#通信协议)
-8. [部署架构](#部署架构)
+1. [当前架构（以代码为准）](#当前架构以代码为准)
+2. [任务分发机制](#任务分发机制)（历史方案，已废弃）
+3. [执行模式详解](#执行模式详解)（历史方案）
+4. [关键问题与解决方案](#关键问题与解决方案)
+5. [数据流详解](#数据流详解)
+6. [通信协议](#通信协议)
+7. [部署架构](#部署架构)
 
 ---
 
-## 概述
+## 当前架构（以代码为准）
 
-自动化测试平台采用**消息队列 + 独立执行器**的分布式架构设计，实现了任务分发与执行的解耦。
-
-### 核心设计原则
+### 设计原则
 
 | 原则 | 说明 | 实现方式 |
 |------|------|----------|
-| **解耦分离** | 任务分发与执行分离 | RabbitMQ 消息队列 |
-| **状态独立** | 执行器独立管理状态 | 执行器端 running_tasks 控制 |
-| **双路径执行** | 顺序/并发执行分离逻辑 | 后端控制顺序，执行器控制并发 |
-| **可扩展性** | 支持多执行机负载均衡 | 队列绑定与选择算法 |
+| 进程内执行 | 不单独部署执行机 | `ExecutionRunner` 线程池调用 `PlaywrightEngine` |
+| 并发可控 | 限制同时打开的浏览器数 | `MAX_CONCURRENT_EXECUTIONS`（环境变量 / 系统设置，默认 3） |
+| 实时反馈 | 步骤结果推到页面 | Django Channels WebSocket |
+| 可选基础设施 | 本地尽量零依赖 | 本地 `CHANNEL_LAYER_BACKEND=inmemory` + SQLite；生产用 Redis |
 
----
-
-## 核心架构设计
-
-### 系统分层架构
+### 分层
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         表现层 (Presentation)                       │
-│                        Vue.js 3 + Ant Design                        │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ HTTP + WebSocket
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                          应用层 (Application)                        │
-│                      Django REST Framework                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
-│  │  REST API    │  │  WebSocket   │  │   TaskDistributor        │  │
-│  │   Service    │  │   Service    │  │   (任务分发服务)          │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ HTTP POST
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        消息层 (Message Queue)                        │
-│                          RabbitMQ + Pika                            │
-│  ┌────────────────────────────────────────────────────────────────┐ │
-│  │                   Exchange: executor_tasks                     │ │
-│  │  队列: executor.{uuid} (每个执行机专属队列)                    │ │
-│  └────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ 消费任务
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                          执行层 (Execution)                          │
-│                  Playwright Docker Executor                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
-│  │   Async      │  │   Task       │  │   Playwright Engine      │  │
-│  │  Task        │  │   Manager    │  │  (容器化执行, Trace 录制) │  │
-│  │  Manager     │  │   (aio-pika) │  │                          │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│  Vue 3 前端（HTTP + WebSocket）          │
+└──────────────────┬──────────────────────┘
+                   ▼
+┌─────────────────────────────────────────┐
+│  Django + DRF + Channels                │
+│  executions.services → ExecutionRunner  │
+│  ai_service（NL2Script / Healing）      │
+└──────────────────┬──────────────────────┘
+                   ▼
+┌─────────────────────────────────────────┐
+│  engine/playwright_engine.py            │
+│  本机或后端容器内的 Chromium             │
+└─────────────────────────────────────────┘
 ```
 
-### 核心组件说明
+不经过 RabbitMQ，也没有「执行器注册 / 心跳 / 专属队列」。
 
-#### 1. TaskDistributor (任务分发服务)
-**位置**: `backend/services/task_distributor.py`
+### 当前执行流程
 
-**职责**:
-- 扫描待分配任务 (`TaskQueue.status = 'pending'`)
-- 根据执行机选择策略选择可用执行机
-- 将任务发布到 RabbitMQ
-- 更新任务状态为 `assigned`
+```
+用户点击「执行测试」
+        │
+        ▼
+POST /api/executions/
+        │
+        ▼
+start_script_execution() / start_plan_execution()
+  - 创建 Execution（status=pending）
+  - ExecutionRunner.start(execution_id, steps)
+        │
+        ▼
+全局 ThreadPoolExecutor
+  - 有空闲 worker：立即 _run()
+  - 已满：排队，记录保持 pending
+        │
+        ▼
+PlaywrightEngine.setup() → execute_steps()
+  - 逐步写回结果
+  - Channels 推送步骤状态
+  - 失败时采集元素摘要，供 AI 分析
+        │
+        ▼
+Execution status = completed / failed / cancelled
+```
 
-#### 2. AsyncTaskManager (异步任务管理器)
-**位置**: `executor-docker/task_manager.py`
+计划执行会为每个脚本建子 Execution，当前 runner **各自独立提交**，计划上的 sequential/parallel 字段保留，但并发实际上由线程池 `max_workers` 限制。
 
-**职责**:
-- 连接 RabbitMQ 并创建专属队列
-- 消费队列中的任务消息
-- 调用 TaskManager 执行任务
-- 处理 ACK/NACK 确认
+### 核心代码（当前）
 
-#### 3. AsyncTaskManager (任务管理器)
-**位置**: `executor-docker/task_manager.py`
+| 文件 | 职责 |
+|------|------|
+| `backend/services/execution_runner.py` | 线程池、提交/取消、跑 Playwright |
+| `backend/apps/executions/services.py` | 创建执行记录并 dispatch |
+| `backend/engine/playwright_engine.py` | 步骤执行 |
+| `backend/apps/executors/models.py` | 仅 Variable，不是执行机模型 |
+| `backend/core/settings.py` | Channel 层：redis 或 inmemory |
 
-**职责**:
-- 接收任务并启动执行线程
-- 控制**并发执行数量** (executor-side 控制)
-- 管理运行状态 `running_tasks`
-- 上报执行结果
+### 和「只装浏览器驱动」的关系
+
+V1 是桌面客户端 + Selenium 驱动。  
+当前 V2 代码等价于：**后端所在环境装好 Playwright 浏览器**（`playwright install chromium`），即可跑用例。  
+不需要再买一台执行机，也不需要 `executor-docker` 容器。
+
+若把后端放进 Docker，浏览器必须打进 **backend 镜像**，而不是再起一个 executor 容器。
 
 ---
 
 ## 任务分发机制
+
+> 以下至文末多数内容为早期「RabbitMQ + 独立执行器」方案存档，与当前代码不符。
+
 
 ### 完整任务分发流程
 
@@ -950,14 +955,23 @@ HTTP/1.1 200 OK
 
 ### 核心代码文件索引
 
+**当前有效：**
+
 | 文件路径 | 核心功能 |
 |----------|----------|
-| `backend/services/task_distributor.py` | 任务分发服务 |
-| `backend/apps/executors/services.py` | 执行机选择算法 |
-| `executor-docker/task_manager.py` | 异步任务管理 (并发控制) |
-| `executor-docker/executor.py` | Playwright 执行引擎 |
-| `backend/apps/executions/models.py` | Execution 模型 |
-| `backend/apps/tasks/models.py` | TaskQueue 模型 |
+| `backend/services/execution_runner.py` | 线程池执行引擎 |
+| `backend/apps/executions/services.py` | 创建并提交执行 |
+| `backend/engine/playwright_engine.py` | Playwright 步骤引擎 |
+| `backend/apps/executions/models.py` | Execution / HealLog |
+
+**以下文件在本仓库中已不存在或已改职责（早期方案）：**
+
+| 文件路径 | 说明 |
+|----------|------|
+| `backend/services/task_distributor.py` | 不存在 |
+| `executor-docker/` | 不存在 |
+| `backend/apps/tasks/models.py` | 不存在 |
+| `backend/apps/executors/` | 现仅变量 API |
 
 ### 数据库关系图
 
